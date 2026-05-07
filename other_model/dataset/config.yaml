@@ -1,0 +1,26 @@
+'data_split_mode': 'user_split'  # 或 use_user_split=True
+'split_ratio': (0.8, 0.1, 0.1)
+'item_mapping_order': 'first'
+'max_item_seq_len': 10
+'pad_value': 0
+'pad_order': 'right'
+
+KSID:
+  data_path_prefix: ../../data/
+  raw_seq_name: raw_seq_lv
+  item2codes_name: item2codes_raw
+  n_digits: 8
+  codebook_size: 512
+  sent_emb_model_tag: None
+  Quantizer_model_tag: None
+
+Amazon2014:
+  data_path_prefix: ./cache/Amazon2014
+  raw_seq_name: raw_seq
+  item2codes_name: item2codes
+  n_digits: 4
+  codebook_size: 256
+  sent_emb_model_tag: sentence-t5-base
+  Quantizer_model_tag: opq_pq # opq_pq
+
+# 'data_split_mode': 'leave_one_out'  # 或 use_user_split=False
