@@ -5,13 +5,11 @@ import argparse
 import sys
 import os
 from pipeline_streaming import StreamingPipeline
-#from tokenizer.tokenizer import VanillaTokenizer
 from tokenizer.streaming_tokenizer import StreamingTokenizer
-from model import SASRec, TIGER, ActionPiece, DiffGRM, LLaDA_Rec
 
 
 def parse_args():
-
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description='Streaming Training for Recommendation Models')
     
     parser.add_argument('--model', type=str, default='TIGER', 
@@ -21,71 +19,58 @@ def parse_args():
     parser.add_argument('--category', type=str, default=None, 
                         help='Dataset category (optional)')
     
-
-    parser.add_argument('--json_config_path', type=str, required=True,
+    # Streaming training configuration
+    parser.add_argument('--json_config', type=str, required=True,
                         help='Path to JSON config file containing interaction and item files')
     parser.add_argument('--checkpoint', type=str, default=None, 
                         help='Path to model checkpoint for resuming training')
     
-
     parser.add_argument('--task', type=str, default='is_click',
                         help='Interaction task type (default: is_click)')
     parser.add_argument('--item_history_days', type=int, default=7,
                         help='Number of days for item history (default: 7)')
     parser.add_argument('--epochs_per_round', type=int, default=1,
-                        help='Number of epochs per training round (default: 5)')
+                        help='Number of epochs per training round (default: 1)')
     parser.add_argument('--max_seq_len', type=int, default=50,
                         help='Maximum sequence length (default: 50)')
     parser.add_argument('--min_seq_len', type=int, default=5,
                         help='Minimum sequence length for users (default: 5)')
     
-
+    # Training mode
     parser.add_argument('--training_mode', type=str, default='continual',
                         choices=['continual', 'from_scratch', 'from_checkpoint'],
                         help='Training mode (default: continual)')
- 
-
+    
     parser.add_argument('--lr', type=float, default=5e-4,
                         help='Learning rate (default: 5e-4)')
-    parser.add_argument('--model_size', type=str, default='tiny',
+    parser.add_argument('--model_size', type=str, default='small',
                         help='Model size: tiny, small, base, large (default: small)')
     parser.add_argument('--num_beams', type=int, default=50,
                         help='Number of beams for beam search (default: 50)')
-    parser.add_argument('--train_batch_size', type=int, default=128,
-                        help='Training batch size (default: 128)')
-    parser.add_argument('--eval_batch_size', type=int, default=32,
-                        help='Evaluation batch size (default: 32)')
+    parser.add_argument('--train_batch_size', type=int, default=64,
+                        help='Training batch size (default: 64)')
+    parser.add_argument('--eval_batch_size', type=int, default=8,
+                        help='Evaluation batch size (default: 8)')
     
- 
     parser.add_argument('--output_dir', type=str, default='./outputs/streaming',
                         help='Output directory for checkpoints and logs')
     parser.add_argument('--save_every_round', action='store_true',
                         help='Save checkpoint after every round')
     
-
     parser.add_argument('--mode', type=str, default='train',
-                        choices=['train', 'eval', 'eval_all', 'resume', 'plan','eval_prev_ckpt_last_day'],
+                        choices=['train', 'eval', 'eval_all', 'resume', 'plan'],
                         help='Running mode (default: train)')
     parser.add_argument('--resume_from', type=int, default=1,
                         help='Round number to resume training from (default: 1)')
-    parser.add_argument('--data_mode',type=str,default='streaming',choices=['streaming', 'full_user'],
-                        help='Data mode: streaming or full_user')
 
     parser.add_argument('--max_history_len', type=int, default=999,
-                        help='Maximum history length per user (default: 100)')
+                        help='Maximum history length per user (default: 999)')
 
     parser.add_argument('--max_train_samples_per_user', type=int, default=1000,
-                        help='Maximum training samples per user (default: 50)')
+                        help='Maximum training samples per user (default: 1000)')
     parser.add_argument('--no_accumulate', action='store_true',
                         help='Disable history accumulation (each round independent)')
-
-    parser.add_argument('--last_day_target_limit', type=int, default=50,
-                    help='For eval_prev_ckpt_last_day mode: number of first interactions on the last day used as targets per user')
-    parser.add_argument('--eval_round_num', type=int, default=None,
-                    help='Optional round number for eval modes. For eval_prev_ckpt_last_day, default is the last round')
-
     
-    # wandb 
     parser.add_argument('--use_wandb', action='store_true', help='Enable wandb logging')
     parser.add_argument('--wandb_project', type=str, default='tiger-streaming', help='Wandb project name')
     parser.add_argument('--wandb_run_name', type=str, default=None, help='Wandb run name')
@@ -95,7 +80,7 @@ def parse_args():
 
 
 def parse_extra_args(unparsed: list) -> dict:
-
+    """Parse additional command-line arguments."""
     args = {}
     for text_arg in unparsed:
         if '=' not in text_arg:
@@ -118,7 +103,7 @@ def parse_extra_args(unparsed: list) -> dict:
 
 
 def main():
-
+    """Main entry point."""
     args, unparsed_args = parse_args()
     extra_config = parse_extra_args(unparsed_args)
     
@@ -135,7 +120,6 @@ def main():
     }
     config_dict.update(extra_config)
     
-
     os.makedirs(args.output_dir, exist_ok=True)
     
     print(f"\n{'='*60}")
@@ -143,7 +127,7 @@ def main():
     print(f"{'='*60}")
     print(f"Mode: {args.mode}")
     print(f"Model: {args.model}")
-    print(f"JSON Config: {args.json_config_path}")
+    print(f"JSON Config: {args.json_config}")
     print(f"Task: {args.task}")
     print(f"Item History Days: {args.item_history_days}")
     print(f"Epochs per Round: {args.epochs_per_round}")
@@ -151,12 +135,11 @@ def main():
     print(f"Output Directory: {args.output_dir}")
     print(f"{'='*60}\n")
     
-  
     pipeline = StreamingPipeline(
         model_name=args.model,
         dataset_name=args.dataset,
         category=args.category,
-        json_config_path=args.json_config_path,
+        json_config_path=args.json_config,
         checkpoint_path=args.checkpoint,
         tokenizer=StreamingTokenizer,
         config_dict=config_dict,
@@ -166,7 +149,6 @@ def main():
         max_seq_len=args.max_seq_len,
         min_seq_len=args.min_seq_len,
         training_mode=args.training_mode,
-        data_mode=args.data_mode,
         max_history_len=args.max_history_len,
         accumulate_history=accumulate_history,
         max_train_samples_per_user=args.max_train_samples_per_user,
@@ -176,7 +158,6 @@ def main():
         wandb_tags=args.wandb_tags,
     )
     
-
     if args.mode == 'train':
         results = pipeline.run()
     elif args.mode == 'eval':
@@ -188,11 +169,6 @@ def main():
     elif args.mode == 'plan':
         pipeline.print_training_plan()
         results = {'status': 'plan_printed'}
-    elif args.mode == 'eval_prev_ckpt_last_day':
-        results = pipeline.evaluate_last_day_with_prev_ckpt(
-            eval_round=args.eval_round_num,
-            target_limit=args.last_day_target_limit,
-        )
     else:
         raise ValueError(f"Unknown mode: {args.mode}")
     

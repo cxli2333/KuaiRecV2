@@ -8,24 +8,24 @@ from logging import getLogger
 from dataset.dataset import AbstractDataset
 
 def stack_to_tensor(seq, dtype=None):
-    """将列表 stack 成 Tensor；若传入 dtype 则转换类型。"""
+    """Stack a list into a tensor and convert its type if dtype is supplied."""
     out = torch.stack(seq) if torch.is_tensor(seq[0]) else torch.as_tensor(seq)
     return out.to(dtype) if dtype else out
 
 
 def collate_fn_with_labels(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
     """
-    训练时的collate函数
+    Training collate function.
     
     Args:
-        batch: 包含以下字段的字典列表：
-            - history_sid: 历史SID序列 [seq_len, n_digit]
-            - history_mask: 历史掩码 [seq_len]
-            - decoder_input_ids: decoder输入 [n_digit]
-            - decoder_labels: decoder标签 [n_digit]
+        batch: list of dictionaries containing these fields:
+            - history_sid: historical SID sequence [seq_len, n_digit]
+            - history_mask: history mask [seq_len]
+            - decoder_input_ids: decoder inputs [n_digit]
+            - decoder_labels: decoder labels [n_digit]
     
     Returns:
-        批处理后的字典
+        Collated dictionary
     """
     return {
         'input_ids': stack_to_tensor([b['history_tokens'] for b in batch]),                      # [B, S, n_digit]
@@ -38,16 +38,16 @@ def collate_fn_with_labels(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tenso
 
 def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
     """
-    验证时的collate函数
+    Validation collate function.
     
     Args:
-        batch: 包含以下字段的字典列表：
-            - history_sid: 历史SID序列 [seq_len, n_digit]
-            - history_mask: 历史掩码 [seq_len]
-            - labels: 真标签序列 [n_digit]
+        batch: list of dictionaries containing these fields:
+            - history_sid: historical SID sequence [seq_len, n_digit]
+            - history_mask: history mask [seq_len]
+            - labels: ground-truth label sequence [n_digit]
     
     Returns:
-        批处理后的字典
+        Collated dictionary
     """
     return {
         'input_ids': stack_to_tensor([b['history_tokens'] for b in batch]),
@@ -105,8 +105,6 @@ class VanillaTokenizer(AbstractTokenizer):
         self.dataset = dataset
         self.pad_order = config.get('pad_order', 'right')
         self.pad_token = 0
-        #self.bos_token = 1
-        #self.eos_token = 1
         self.sid_offset = 1
         self.n_digit = n_digits
         self.codebook_size = codebook_size
@@ -126,7 +124,7 @@ class VanillaTokenizer(AbstractTokenizer):
         id2item = dataset.id_mapping['id2item']
         num_items = dataset.num_items  
 
-        # 仅为 1..num_items-1 的有效 item_id 构建
+        # Build mappings only for valid item IDs in 1..num_items-1
         not_found = 0
         range_err = 0
         for iid in range(1, num_items+1):
@@ -135,17 +133,13 @@ class VanillaTokenizer(AbstractTokenizer):
                 not_found += 1
                 continue
             sid_list = item2sid_map[item_key]
-            # 合法性检查：长度一致、取值范围在 [0, codebook_size-1]
+            # Validate equal lengths and values in [0, codebook_size-1]
             if len(sid_list) != self.n_digit:
                 raise ValueError(f'item_id={iid} has SID length {len(sid_list)} != n_digit {self.n_digit}')
             if any((s < 0 or s >= self.codebook_size) for s in sid_list):
                 range_err += 1
                 continue
 
-            # tokens = [
-            #     int(sid_list[d]) + self.sid_offset + d * self.codebook_size
-            #           for d in range(self.n_digit) ]
-            #self.id2tokens[iid] = tuple(tokens)
             self.id2sids[iid] = self._reorder_sids(tuple(sid_list))
             
         self.build_id2tokens_tensor(num_items)
@@ -162,12 +156,12 @@ class VanillaTokenizer(AbstractTokenizer):
                     self.sids2ids[sids] = []
             self.sids2ids[sids].append(iid)
 
-        # 可选：统计冲突情况
+        # Optionally count collisions
         num_collisions = sum(1 for v in self.sids2ids.values() if len(v) > 1)
         self.log(f'[VANILLA] Built mappings: item2tokens={len(self.id2sids)}, '
                     f'sids2ids={len(self.sids2ids)}, collisions={num_collisions}')
 
-        # collate，由你项目中的 collate 保持一致（可选）
+        # Use the project's existing collate functions for consistency, optionally
         try:    
             self.collate_fn = {'train': collate_fn, 'val': collate_fn_with_labels, 'test': collate_fn_with_labels}
         except Exception:  
@@ -175,8 +169,8 @@ class VanillaTokenizer(AbstractTokenizer):
 
     def _parse_sid_order(self, sid_order: Optional[List[int]]) -> Tuple[int, ...]:
         """
-        支持在配置中指定 SID 的维度顺序。
-        - 支持 0/1 开始的索引，例如 [2,1,3] 会交换前两位（按 1-based 解析）。
+        Support configuring the order of SID dimensions.
+        - Support zero- and one-based indices; [2,1,3] swaps the first two dimensions using one-based indices.
         """
         if sid_order is None:
             return tuple(range(self.n_digit))
@@ -185,7 +179,7 @@ class VanillaTokenizer(AbstractTokenizer):
         if len(order_list) != self.n_digit:
             raise ValueError(f'sid_order length {len(order_list)} must equal n_digit {self.n_digit}')
 
-        # 先尝试 0-based，再尝试 1-based
+        # Try zero-based indices first, then one-based indices
         zero_based_candidate = list(order_list)
         one_based_candidate = [x - 1 for x in order_list]
 
@@ -200,7 +194,7 @@ class VanillaTokenizer(AbstractTokenizer):
         raise ValueError(f'sid_order must be a permutation of 0..{self.n_digit-1} or 1..{self.n_digit}, got {sid_order}')
 
     def _reorder_sids(self, sid_list: Tuple[int, ...]) -> Tuple[int, ...]:
-        """按照 sid_order 重新排列 SID 维度。"""
+        """Reorder SID dimensions according to sid_order."""
         return tuple(sid_list[idx] for idx in self.sid_order)
 
     @property
@@ -214,13 +208,13 @@ class VanillaTokenizer(AbstractTokenizer):
     
     def sids_to_id(self, sids):
         """
-        将codebook ID序列转换为item_id，检查合法性
+        Convert a codebook ID sequence to item_id with validity checks.
         
         Args:
-            cb_ids: List[int] 长度 n_digit, 原始 codebook ID (0-255)
+            cb_ids: List[int] of length n_digit containing raw codebook IDs (0-255)
             
         Returns:
-            item_id(int) 或 None（如果非法）
+            item_id (int), or None for invalid values
         """
         if len(sids) != self.n_digit:
             return None
@@ -229,8 +223,8 @@ class VanillaTokenizer(AbstractTokenizer):
 
     def build_id2tokens_tensor(self, num_items):
         """
-        构建查表张量 table: (num_items+1, n_digit)
-        第 0 行为 PAD（全 -1），其余行为对应 iid 的 sids（无则也填 -1）。
+        Build a lookup tensor table: (num_items+1, n_digit).
+        Row 0 is PAD (all -1); other rows contain the corresponding iid SIDs, or -1 when missing.
         """
         sids2tokens_offset = torch.arange(self.n_digit, dtype=torch.long) * self.codebook_size + int(self.sid_offset)
         table_id2sids = torch.full((num_items + 1, self.n_digit), int(self.pad_token), dtype=torch.long)
@@ -251,29 +245,29 @@ class VanillaTokenizer(AbstractTokenizer):
         """
         Args:
             sids_flat: (B, T) = (B, L * n_digit)
-                已展平的 code tokens（前 len_seq[b]*n_digit 为有效 token，其余可视为 PAD/占位）
-            len_seq:   (B,) 每个样本的有效 item 数（不是 token 数）
-            padding_side: "right" 或 "left"
+                Flattened code tokens; the first len_seq[b]*n_digit tokens are valid, and the rest are padding/placeholders.
+            len_seq: (B,) number of valid items per sample, not the number of tokens
+            padding_side: "right" or "left"
                 - "right": [BOS] tok tok tok EOS PAD PAD ...
                 - "left" : PAD PAD ... [BOS] tok tok tok EOS
-            return_mask: 是否返回 mask
+            return_mask: whether to return a mask
 
         Returns:
             tokens_out: (B, T+2)  # +BOS +EOS
-            mask_out  : (B, T+2)  # True 表示非 PAD（含 BOS/EOS）
+            mask_out: (B, T+2)  # True indicates non-PAD positions, including BOS/EOS
         """
 
         B, T = sids_flat.shape              # T = L * n_digit
-        M    = int(self.n_digit)            # 每个 item 的 code 数
+        M    = int(self.n_digit)            # Number of codes per item
         device = sids_flat.device
         dtype  = sids_flat.dtype
 
-        # 有效 token 总数（每行）：eff_T[b] = len_seq[b] * M
+        # Total valid tokens per row: eff_T[b] = len_seq[b] * M
         eff_T = (len_seq * M)      # (B,)
         eff_T_unsq = eff_T.unsqueeze(1)           # (B,1)
         rows = torch.arange(B, device=device)     # (B,)
 
-        # 1) 预分配输出：全 PAD
+        # 1) Preallocate output filled with PAD
         tokens_out = torch.full((B, T + 2), int(self.pad_token), dtype=dtype, device=device)
 
         inner = tokens_out[:, 1:1+T]             # (B, T)
@@ -289,7 +283,7 @@ class VanillaTokenizer(AbstractTokenizer):
         elif padding_order == "left":
             # PAD PAD ... [BOS] tok tok tok EOS
             bos_pos = T - eff_T                                         # (B,)
-            eos_pos = torch.full((B,), T + 1, dtype=torch.long, device=device)  # 固定最后一列
+            eos_pos = torch.full((B,), T + 1, dtype=torch.long, device=device)  # Always use the final column
             body_mask_inner = (col_T >= (T - eff_T_unsq))               # (B, T)
         else:
             raise ValueError(f"padding_side must be 'right' or 'left', got: {padding_order}")
@@ -310,33 +304,33 @@ class VanillaTokenizer(AbstractTokenizer):
 
     def add_eos(self, sids_flat: torch.Tensor, len_seq: torch.Tensor, padding_order: str = "right", return_mask: bool = True):
         """
-        只添加 EOS（不再添加 BOS）
+        Append only EOS, without BOS.
 
         Args:
             sids_flat: (B, T) = (B, L * n_digit)
-                已展平的 code tokens（前 len_seq[b] * n_digit 为有效 token，其余可视为占位）
-            len_seq:   (B,) 每个样本的有效 item 数（不是 token 数）
-            padding_order: "right" 或 "left"
+                Flattened code tokens; the first len_seq[b]*n_digit tokens are valid, and the rest are placeholders.
+            len_seq: (B,) number of valid items per sample, not the number of tokens
+            padding_order: "right" or "left"
                 - "right": tok tok tok EOS PAD PAD ...
                 - "left" : PAD PAD ... tok tok tok EOS
-            return_mask: 是否返回 mask
+            return_mask: whether to return a mask
 
         Returns:
-            tokens_out: (B, T+1)  # 只多出一个 EOS
-            mask_out  : (B, T+1)  # True 表示非 PAD（含 EOS）
+            tokens_out: (B, T+1)  # One additional EOS
+            mask_out: (B, T+1)  # True indicates non-PAD positions, including EOS
         """
 
         B, T = sids_flat.shape              # T = L * n_digit
-        M    = int(self.n_digit)            # 每个 item 的 code 数
+        M    = int(self.n_digit)            # Number of codes per item
         device = sids_flat.device
         dtype  = sids_flat.dtype
 
-        # 有效 token 总数（每行）：eff_T[b] = len_seq[b] * M
+        # Total valid tokens per row: eff_T[b] = len_seq[b] * M
         eff_T = (len_seq * M)                      # (B,)
         eff_T_unsq = eff_T.unsqueeze(1)            # (B, 1)
         rows = torch.arange(B, device=device)      # (B,)
 
-        # 1) 预分配输出：全 PAD，长度为 T+1（只多一个 EOS）
+        # 1) Preallocate PAD-filled output of length T+1 for one extra EOS
         tokens_out = torch.full(
             (B, T + 1),
             int(self.pad_token),
@@ -344,22 +338,22 @@ class VanillaTokenizer(AbstractTokenizer):
             device=device,
         )
 
-        # inner 是“主体 token 区域”，最后一列保留给 EOS（对 right padding 来说）
+        # inner is the body-token region; reserve the final column for EOS with right padding
         inner = tokens_out[:, :T]                  # (B, T)
         col_T = torch.arange(T, device=device).unsqueeze(0)  # (1, T)
 
         if padding_order == "right":
             # tok tok tok EOS PAD PAD ...
-            # 有效 body 从位置 0 开始连续放 eff_T 个
+            # Place eff_T valid body tokens consecutively starting at position 0
             body_mask_inner = (col_T < eff_T_unsq)         # (B, T)
-            # EOS 紧跟在最后一个有效 token 之后
+            # Place EOS immediately after the last valid token
             eos_pos = eff_T                                # (B,)
 
         elif padding_order == "left":
             # PAD PAD ... tok tok tok EOS
-            # 有效 body 靠右对齐：放在 [T - eff_T, T)
+            # Right-align valid body tokens in [T - eff_T, T)
             body_mask_inner = (col_T >= (T - eff_T_unsq))  # (B, T)
-            # EOS 固定在 tokens_out 的最后一列（索引 T）
+            # Place EOS in the final tokens_out column at index T
             eos_pos = torch.full(
                 (B,),
                 T,
@@ -371,14 +365,14 @@ class VanillaTokenizer(AbstractTokenizer):
                 f"padding_order must be 'right' or 'left', got: {padding_order}"
             )
 
-        # 写入 EOS
+        # Write EOS
         tokens_out[rows, eos_pos] = int(self.eos_token)
 
-        # 把 sids_flat 前 eff_T 个有效 token 填入 body
+        # Copy the first eff_T valid tokens from sids_flat into the body
         src_col = torch.arange(T, device=device).unsqueeze(0)   # (1, T)
         src_mask = (src_col < eff_T_unsq)                       # (B, T)
         sids_active = sids_flat[src_mask]                       # (sum(eff_T),)
-        inner[body_mask_inner] = sids_active                    # 填充 body 区
+        inner[body_mask_inner] = sids_active                    # Fill the body region
 
         if not return_mask:
             return tokens_out
@@ -415,13 +409,10 @@ class VanillaTokenizer(AbstractTokenizer):
 
         if not ar_flag:
             return tokens
-        # -------------------------------
-        #   AR 模式：前加 BOS，后加 EOS
-        # -------------------------------
+        #   AR mode: prepend BOS and append EOS
         B, M = tokens.shape
         dtype = tokens.dtype
         device = tokens.device
-        #bos = torch.full((B, 1), int(self.bos_token), dtype=dtype, device=device)
         eos = torch.full((B, 1), int(self.eos_token), dtype=dtype, device=device)
         #return torch.cat([bos, tokens, eos], dim=1)
         return torch.cat([tokens, eos], dim=1)
@@ -483,10 +474,10 @@ class VanillaTokenizer(AbstractTokenizer):
                 pass
         return tokenized
 
-    # --------- 可选：保存/加载映射，方便复用 ----------
+    # --------- Optional: save/load mappings for reuse ----------
     # def save_mappings(self, out_dir: str):
     #     os.makedirs(out_dir, exist_ok=True)
-    #     # item_id -> sid_tokens（带 offset）
+    # # item_id -> sid_tokens with offsets
     #     item_id2tokens = np.zeros((self.dataset.num_items, self.n_digit), dtype=np.int64)
     #     for item, toks in self.item2tokens.items():
     #         iid = self.dataset.item2id.get(item, 0)
@@ -503,11 +494,11 @@ from logging import getLogger
 
 class IdentTokenizer(AbstractTokenizer):
     """
-    IdentTokenizer: 不使用 SID 映射，直接用 item_id 作为 token。
-    - n_digit 固定为 1
+    IdentTokenizer: use item_id directly as the token without SID mappings.
+    - n_digit is fixed to 1
     - codebook_size = dataset.num_items
-    - diffusion 用的 code/sid 取值为 (item_id - 1) ∈ [0, codebook_size-1]
-    - token 取值为 item_id（PAD=0），通过 sid_offset=1 保证 token = sid + 1
+    - Diffusion code/sid values are (item_id - 1) in [0, codebook_size-1]
+    - token = item_id with PAD=0; sid_offset=1 ensures token = sid + 1
 
     Special tokens:
         PAD=0
@@ -526,22 +517,22 @@ class IdentTokenizer(AbstractTokenizer):
         self.pad_order = config.get('pad_order', 'right')
         self.pad_token = 0
 
-        # 与 Vanilla 的设计保持一致：token = sid + sid_offset
+        # Match Vanilla's design: token = sid + sid_offset
         self.sid_offset = 1
 
-        # 关键：不用 SID，固定 1 digit
+        # Do not use SIDs; fix the number of digits to one
         self.n_digit = 1
         self.codebook_size = int(dataset.num_items)
 
-        # 映射表：iid -> (sid,)
-        # sid = iid - 1，保证 sid 范围在 [0, codebook_size-1]
+        # Mapping table: iid -> (sid,)
+        # sid = iid - 1, ensuring sid is in [0, codebook_size-1]
         self.id2sids: Dict[Any, Tuple[int, ...]] = {}
         for iid in range(1, self.codebook_size + 1):
             self.id2sids[iid] = (iid - 1,)
 
         self.build_id2tokens_tensor(self.codebook_size)
 
-        # 反查表：(sid,) -> [iid]
+        # Reverse mapping: (sid,) -> [iid]
         self.sids2ids: Dict[Tuple[int, ...], List[int]] = {}
         for iid, sids in self.id2sids.items():
             self.sids2ids.setdefault(sids, []).append(iid)
@@ -552,7 +543,7 @@ class IdentTokenizer(AbstractTokenizer):
             f'item2sids={len(self.id2sids)}, sids2ids={len(self.sids2ids)}, collisions={num_collisions}'
         )
 
-        # collate：保持 Vanilla 的逻辑
+        # collate: retain Vanilla's logic
         try:
             self.collate_fn = {
                 'train': collate_fn,
@@ -562,9 +553,7 @@ class IdentTokenizer(AbstractTokenizer):
         except Exception:
             self.collate_fn = {'train': None, 'val': None, 'test': None}
 
-    # --------------------
     # Properties
-    # --------------------
     @property
     def vocab_size(self) -> int:
         # PAD(0) + item tokens(1..num_items) => num_items+1
@@ -575,11 +564,9 @@ class IdentTokenizer(AbstractTokenizer):
         max_len = self.config.get('max_item_seq_len')
         return int(max_len) * self.n_digit
 
-    # --------------------
     # Core mapping helpers
-    # --------------------
     def sids_to_id(self, sids):
-        """输入 (sid,) 返回对应 item_id 列表（或 [None]）"""
+        """Return item IDs corresponding to (sid,), or [None]."""
         if len(sids) != self.n_digit:
             return [None]
         return self.sids2ids.get(tuple(sids), [None])
@@ -588,9 +575,9 @@ class IdentTokenizer(AbstractTokenizer):
         """
         table_id2sids  : (num_items+1, 1)  sid = iid-1
         table_id2tokens: (num_items+1, 1)  token = sid + sid_offset = iid
-        第 0 行为 PAD（全 0）
+        Row 0 is PAD (all zeros).
         """
-        # n_digit=1 时偏移就是 sid_offset
+        # For n_digit=1, the offset is sid_offset
         sids2tokens_offset = torch.tensor([int(self.sid_offset)], dtype=torch.long)
 
         table_id2sids = torch.full((num_items + 1, self.n_digit), int(self.pad_token), dtype=torch.long)
@@ -605,9 +592,7 @@ class IdentTokenizer(AbstractTokenizer):
         self._id2sids_table = table_id2sids
         self._id2tokens_table = table_id2tokens
 
-    # --------------------
     # Encode APIs (keep same behavior as Vanilla)
-    # --------------------
     def encode_history(self, id_seq, len_seq, mask_flag=True, sids_flag=False):
         tokens_table = getattr(self, "_id2tokens_table")
         sids_table = getattr(self, "_id2sids_table")
@@ -615,14 +600,14 @@ class IdentTokenizer(AbstractTokenizer):
         idx = torch.as_tensor(id_seq, dtype=torch.long)  # (B, L)
 
         if sids_flag:
-            # diffusion 用：返回 sid(code) = iid-1
+            # For diffusion: return sid(code) = iid-1
             sids = sids_table[idx]  # (B, L, 1)
             if not mask_flag:
                 return sids
             id_mask = (idx != int(self.pad_token))  # (B, L)
             return sids, id_mask
         else:
-            # 非 diffusion 用：返回 token = iid
+            # For non-diffusion: return token = iid
             tokens = tokens_table[idx].flatten(1)  # (B, L*1) => (B, L)
             if not mask_flag:
                 return tokens
@@ -637,7 +622,7 @@ class IdentTokenizer(AbstractTokenizer):
         if not ar_flag:
             return tokens
 
-        # AR 模式保持 Vanilla 的写法（如果你后续需要）
+        # Keep Vanilla's AR mode implementation for optional future use
         B, M = tokens.shape
         dtype = tokens.dtype
         device = tokens.device

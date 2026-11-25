@@ -6,7 +6,7 @@
 
 __all__ = []
 
-# 使用try-except来处理可能缺失的模块
+# Use try-except to handle potentially missing modules
 try:
     from model.SASRec.model import SASRec
 except ImportError:
@@ -31,27 +31,9 @@ except ImportError:
     DiffGRM = None
     print("Warning: DiffGRM model not found, skipping import")
     
-try:
-    from model.LLaDA_Rec.model import LLaDA_Rec
-except ImportError:
-    LLaDA_Rec = None
-    print("Warning: LLaDA_Rec model not found, skipping import")
-    traceback.print_exc()
-# try:
-#     from model.PGQ.DiT4Rec import PGQ
-# except ImportError:
-#     PGQ = None
-#     print("Warning: PGQ model not found, skipping import")
 
-# try:
-#     from model.PGQ.DiT4Rec import PGQ
-# except Exception as e:  # 临时先别只抓 ImportError
-#     PGQ = None
-#     import traceback
-#     print("Warning: PGQ import failed!")
-#     traceback.print_exc()
 
-# 只导出存在的模型
+# Export only available models
 if SASRec is not None:
     __all__.append('SASRec')
 if TIGER is not None:
@@ -60,7 +42,3 @@ if ActionPiece is not None:
     __all__.append('ActionPiece')    
 if DiffGRM is not None:
     __all__.append('DiffGRM')
-if LLaDA_Rec is not None:
-    __all__.append('LLaDA_Rec')
-# if PGQ is not None:
-#     __all__.append('PGQ')

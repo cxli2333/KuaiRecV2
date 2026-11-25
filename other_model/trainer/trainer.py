@@ -94,11 +94,11 @@ class Trainer:
             init_kwargs={"tensorboard": {"flush_secs": 60}},
         )
         
-        # ==================== DEBUG HOOK（可选）====================
-        # 如果 config 里设置了 debug_first_batch=True，
-        # 在真正训练前，用 train_dataloader 的第一个 batch 做一轮 debug：
-        # 1) teacher-forcing 预测
-        # 2) HF generate vs 自己的 generate
+        # ==================== Optional debug hook ====================
+        # If debug_first_batch=True in config,
+        # run debugging on the first training batch before training:
+        # 1) Teacher-forcing predictions
+        # 2) Hugging Face generate vs custom generate
         # if True:
         #     if self.accelerator.is_main_process:
         #         try:
@@ -107,12 +107,12 @@ class Trainer:
         #             self.debug_one_batch_teacher_forcing(first_batch, max_print_len=8)
 
         #             self.log("Running debug_one_batch_generate on first train batch")
-        #             # n_return_sequences 可以用 evaluator 的 maxk，或者自己指定一个小数
+        #             # Set n_return_sequences to evaluator.maxk or a small custom value
         #             n_ret = min(2, getattr(self.evaluator, "maxk", 2))
         #             self.debug_one_batch_generate(first_batch, n_return_sequences=n_ret, max_print_len=8)
         #         except StopIteration:
         #             self.log("train_dataloader is empty, skip debug_first_batch", level="warning")
-        #     # 让所有进程在这里同步一下
+        #     # Synchronize all processes here
         #     self.accelerator.wait_for_everyone()
         # ==================== DEBUG HOOK END =====================
 
@@ -130,14 +130,6 @@ class Trainer:
             # self.print_recovery_accuracy_over_alpha_grid_for_each_k(val_dataloader)
             self.model.train()
             total_loss = 0.0
-            # total_length = len(train_dataloader)
-            # train_progress_bar = tqdm(
-            #     train_dataloader,
-            #     total=total_length,
-            #     miniters=int(total_length * 0.5),
-            #     desc=f"Training - [Epoch {epoch + 1}]",
-            #     disable=False
-            # )
             
             start_time = time.time()
             for batch in train_dataloader:
@@ -145,7 +137,6 @@ class Trainer:
                 optimizer.zero_grad()
                 outputs = self.model(batch)
                 loss = outputs.loss
-                # logits = outputs.logits  # (B, T, V)
                 self.accelerator.backward(loss)
                 if self.config['max_grad_norm'] is not None:
                     clip_grad_norm_(self.model.parameters(), self.config['max_grad_norm'])
@@ -163,7 +154,6 @@ class Trainer:
 
             # Evaluation
             if (epoch + 1) % self.config['eval_interval'] == 0:
-                #_ = self.evaluate(train_dataloader, split='train')
                 all_results = self.evaluate(val_dataloader, split='val')
                 if self.accelerator.is_main_process:
                     for key in all_results:
@@ -189,13 +179,13 @@ class Trainer:
 
     def debug_one_batch_teacher_forcing(self, batch, max_print_len=8):
         """
-        在 teacher-forcing 条件下检查 T5 的逐 token 预测情况：
-        - 打印 input_ids[0]
-        - 打印 labels[0]
-        - 打印 logits.argmax 后的 pred_ids[0]
+        Inspect T5 token predictions under teacher forcing:
+        - Print input_ids[0]
+        - Print labels[0]
+        - Print pred_ids[0] from logits.argmax
         """
 
-        # 关键：以 model 当前所在 device 为准，避免 CPU/GPU 不一致
+        # Use the model's current device to avoid CPU/GPU mismatches
         model_device = next(self.model.parameters()).device
         batch = {k: v.to(model_device) for k, v in batch.items()}
 
@@ -208,7 +198,7 @@ class Trainer:
             outputs = self.model.t5(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                labels=labels,   # 让 HF 自动 shift_right
+                labels=labels,   # Let Hugging Face perform shift_right automatically
             )
             logits = outputs.logits  # (B, T, V)
             pred_ids = logits.argmax(dim=-1)  # (B, T)
@@ -218,7 +208,7 @@ class Trainer:
         b0_lab = labels[0].detach().cpu()
         b0_pred = pred_ids[0].detach().cpu()
 
-        # 只打印前 max_print_len 个，避免太长
+        # Print only the first max_print_len entries to keep output short
         self.logger.info("=== [Teacher Forcing Debug] ===")
         self.logger.info("Input IDs[0]      : %s", b0_inp[:max_print_len].tolist())
         self.logger.info("Attention Mask[0] : %s", b0_att[:max_print_len].tolist())
@@ -238,13 +228,13 @@ class Trainer:
 
     def debug_one_batch_generate(self, batch, n_return_sequences=2, max_print_len=8):
         """
-        对比:
-        - HF 自带 self.model.t5.generate
-        - 你自己写的 self.model.generate(batch, n_return_sequences)
+        Compare:
+        - Hugging Face self.model.t5.generate
+        - Custom self.model.generate(batch, n_return_sequences)
 
-        前提:
-        - batch 至少包含 input_ids, attention_mask, labels
-        - self.model.generate(batch, n_return_sequences) 返回 (B, n_return_sequences, n_digit)
+        Prerequisites:
+        - batch contains at least input_ids, attention_mask, and labels
+        - self.model.generate(batch, n_return_sequences) returns (B, n_return_sequences, n_digit)
         """
 
         model_device = next(self.model.parameters()).device
@@ -276,7 +266,7 @@ class Trainer:
             gen_hf = gen_hf.view(B, n_return_sequences, max_length)
             gen_hf_digits = gen_hf[:, :, 1:1+n_digit]
 
-            # 2) 你自己的 generate
+            # 2) Custom generate
             gen_custom = self.model.generate(
                 {"input_ids": input_ids, "attention_mask": attention_mask},
                 n_return_sequences=n_return_sequences,
@@ -308,47 +298,47 @@ class Trainer:
 
     def run_debug_on_dataloader(self, dataloader, n_batches=1, n_return_sequences=2):
         """
-        从 dataloader 里抽 n_batches 个 batch，依次做：
-        1) teacher-forcing 下的预测对比
-        2) HF generate vs 自定义 generate 对比
+        Take n_batches from the dataloader and run:
+        1) Teacher-forcing prediction comparisons
+        2) Hugging Face generate vs custom generate comparisons
         """
         from itertools import islice
 
         for step, batch in enumerate(islice(dataloader, n_batches)):
             self.logger.info("========== Debug batch %d ==========", step)
 
-            # 1) teacher-forcing 调试
+            # 1) Teacher-forcing debugging
             self.debug_one_batch_teacher_forcing(batch, max_print_len=8)
 
-            # 2) generate 调试
+            # 2) Generation debugging
             self.debug_one_batch_generate(batch, n_return_sequences=n_return_sequences, max_print_len=8)
 
     def overfit_one_batch(self, train_dataloader, steps=500, log_every=50):
         """
-        单 batch 过拟合实验：
-        - 从 train_dataloader 取出第一个 batch
-        - 只在这个 batch 上训练若干步
-        - 持续打印 loss 和 teacher-forcing 下的预测情况
+        Single-batch overfitting experiment:
+        - Take the first batch from train_dataloader
+        - Train only on this batch for several steps
+        - Print loss and teacher-forcing predictions throughout
 
-        用法示例：
+        Usage example:
             trainer.overfit_one_batch(train_dataloader, steps=500, log_every=50)
         """
 
-        # 1) 选设备：直接用 accelerator 的 device，并把模型搬上去
+        # 1) Use the accelerator's device and move the model there
         device = self.accelerator.device
         self.model.to(device)
 
-        # 2) 取一个 batch（不会走 accelerator.prepare）
+        # 2) Get one batch without accelerator.prepare
         try:
             batch = next(iter(train_dataloader))
         except StopIteration:
             self.log("train_dataloader is empty, cannot overfit one batch.", level="warning")
             return
 
-        # 把 batch 搬到同一个 device 上
+        # Move the batch to the same device
         batch = {k: v.to(device) for k, v in batch.items()}
 
-        # 3) 建一个临时 optimizer（不用 scheduler / accelerator，单机调试就好）
+        # 3) Create a temporary optimizer without scheduler/accelerator for single-device debugging
         optimizer = AdamW(
             self.model.parameters(),
             lr=self.config.get('lr', 1e-3),
@@ -361,7 +351,7 @@ class Trainer:
         for step in range(steps):
             optimizer.zero_grad()
 
-            # 和正常训练保持一致：直接调用 self.model(batch)
+            # Match normal training by calling self.model(batch) directly
             outputs = self.model(batch)
             loss = outputs.loss
 
@@ -370,7 +360,7 @@ class Trainer:
 
             if (step + 1) % log_every == 0 or step == 0:
                 self.log(f"[Overfit] step {step+1}/{steps}, loss={loss.item():.6f}", level="info")
-                # 看一下同一个 batch 在 teacher-forcing 下的预测有没有变好
+                # Check whether teacher-forcing predictions improve on the same batch
                 self.debug_one_batch_teacher_forcing(batch, max_print_len=8)
 
         self.log("[Overfit] Finished overfitting 1 batch.", level="info")
@@ -384,17 +374,17 @@ class Trainer:
         max_batches: int = None,
     ):
         """
-        遍历 k=0..M，测量从 x_t 还原 x_0 的精度，并直接打印结果表格（不返回）。
+        Iterate k=0..M, measure reconstruction accuracy from x_t to x_0, and print a table without returning a value.
 
-        指标：
-        - acc_all       : 全位置 accuracy
-        - acc_perturbed : 仅在被加噪位置上的 accuracy（更关键）
-        - pert_ratio    : 被加噪位置占比（用于理解难度）
-        - acc_seq       : sequence-level accuracy（整条 SID 全对）
+        Metrics:
+        - acc_all: accuracy across all positions
+        - acc_perturbed: accuracy only at perturbed positions, the more important metric
+        - pert_ratio: fraction of perturbed positions, indicating difficulty
+        - acc_seq: sequence-level accuracy, requiring the entire SID to match
 
-        额外 confidence 统计（logits 已经是 softmax 后 probs）：
-        - correct / wrong 的 entropy & pmax（全位置）
-        - correct / wrong 的 entropy & pmax（仅 perturbed 位置）
+        Additional confidence statistics, with logits already containing softmax probabilities:
+        - Entropy and pmax for correct/wrong predictions across all positions
+        - Entropy and pmax for correct/wrong predictions at perturbed positions only
         """
 
         if device is None:
@@ -402,7 +392,7 @@ class Trainer:
 
         self.model.eval()
 
-        # --- 拿 M ---
+        # --- Get M ---
         first_batch = None
         for b in dataloader:
             first_batch = b
@@ -410,7 +400,7 @@ class Trainer:
         assert first_batch is not None, "Empty dataloader."
         M = int(first_batch["sid_labels"].shape[1])
 
-        # 统计：每个 k 的 correct/total
+        # Count correct/total for each k
         stats_all = defaultdict(lambda: [0, 0])         # k -> [correct, total]
         stats_pert = defaultdict(lambda: [0, 0])        # k -> [correct, total]
         stats_pert_ratio = defaultdict(lambda: [0, 0])  # k -> [pert_count, total_count]
@@ -435,7 +425,7 @@ class Trainer:
             x0 = batch["sid_labels"].to(device)  # (B, M)
             B = x0.size(0)
 
-            # probs_fn 闭包（你自己的推理函数）
+            # probs_fn closure for the custom inference function
             probs_fn = self.model._get_infer_func_wo_cfg(
                 user_history_sids, attention_mask, personalized_strength
             )
@@ -472,7 +462,7 @@ class Trainer:
                 else:
                     raise ValueError(f"Cannot infer M in out.shape={tuple(out.shape)}, M={M}")
 
-                # logits 已经是 softmax 后概率
+                # logits already contains softmax probabilities
                 probs = logits  # (B, M, V)
                 x0_hat = probs.argmax(dim=-1)  # (B, M)
 
@@ -481,7 +471,7 @@ class Trainer:
                 stats_all[kk][0] += int(correct_all.sum().item())
                 stats_all[kk][1] += int(correct_all.numel())
 
-                # 5) sequence-level accuracy（整条 SID）
+                # 5) Sequence-level accuracy for the complete SID
                 seq_correct = correct_all.all(dim=1)  # (B,)
                 stats_seq[kk][0] += int(seq_correct.sum().item())
                 stats_seq[kk][1] += int(seq_correct.numel())
@@ -534,7 +524,7 @@ class Trainer:
                     stats_conf_wrong_pert[kk][1] += float(pmax[wrong_mask_pert].sum().item())
                     stats_conf_wrong_pert[kk][2] += w_cnt_p
 
-        # --- 打印表格 ---
+        # --- Print the table ---
         self.log("\n=== Recovery Accuracy over k (0..M) ===")
         self.log(f"Evaluated batches: {batch_count}  |  M={M} ")
         self.log("-" * 170)
@@ -602,25 +592,25 @@ class Trainer:
         eps: float = 1e-12,
     ):
         """
-        遍历 k=0..M，测量从 x_t 还原 x_0 的精度，并打印表格。
+        Iterate k=0..M, measure reconstruction accuracy from x_t to x_0, and print a table.
 
-        指标：
-        - acc_all       : 全位置 accuracy
-        - acc_perturbed : 仅在被加噪位置上的 accuracy
-        - pert_ratio    : 被加噪位置占比
-        - acc_seq       : sequence-level accuracy（整条 SID 全对）
+        Metrics:
+        - acc_all: accuracy across all positions
+        - acc_perturbed: accuracy only at perturbed positions
+        - pert_ratio: fraction of perturbed positions
+        - acc_seq: sequence-level accuracy, requiring the entire SID to match
 
-        confidence 统计（probs 已是 softmax 后）：
-        - correct / wrong 的 entropy & pmax（全位置）
-        - correct / wrong 的 entropy & pmax（仅 perturbed 位置）
-        输出 mean ± std
+        Confidence statistics with probabilities already normalized by softmax:
+        - Entropy and pmax for correct/wrong predictions across all positions
+        - Entropy and pmax for correct/wrong predictions at perturbed positions only
+        Report mean +/- standard deviation
         """
 
         if device is None:
             device = next(self.model.parameters()).device
         self.model.eval()
 
-        # --- 拿 M ---
+        # --- Get M ---
         first_batch = None
         for b in dataloader:
             first_batch = b
@@ -672,7 +662,7 @@ class Trainer:
             x0 = batch["sid_labels"].to(device)  # (B, M)
             B = x0.size(0)
 
-            # probs_fn 闭包（你自己的推理函数）
+            # probs_fn closure for the custom inference function
             probs_fn = self.model._get_infer_func_wo_cfg(
                 user_history_sids, attention_mask, personalized_strength
             )
@@ -709,7 +699,7 @@ class Trainer:
                 else:
                     raise ValueError(f"Cannot infer M in out.shape={tuple(out.shape)}, M={M}")
 
-                # probs 已经是 softmax 后概率
+                # probs already contains softmax probabilities
                 probs = probs.clamp(min=eps, max=1.0)        # (B, M, V)
                 x0_hat = probs.argmax(dim=-1)                # (B, M)
 
@@ -765,7 +755,7 @@ class Trainer:
             std = var ** 0.5
             return mean, std
 
-        # --- 打印表格 ---
+        # --- Print the table ---
         self.log("\n=== Recovery Accuracy over k (0..M) with Confidence mean±std ===")
         self.log(f"Evaluated batches: {batch_count}  |  M={M}")
         self.log("-" * 220)
@@ -824,20 +814,20 @@ class Trainer:
         alpha_eps: float = 1e-6,
     ):
         """
-        对每个 k=0..M:
-        - 用 forward_perturb_conjugate(x0,k) 生成 xt（保持噪声位置/幅度与k一致）
-        - 但在推理时，手工指定 sigma_t = -log(alpha_t)，alpha_t 从 alpha_grid 扫描
-        - 统计 acc_all / acc_pert / pert_ratio / acc_seq
-        不计算 confidence。
+        For each k=0..M:
+        - Generate xt with forward_perturb_conjugate(x0,k), keeping perturbation positions and magnitude consistent with k
+        - During inference, manually set sigma_t = -log(alpha_t) and sweep alpha_t over alpha_grid
+        - Measure acc_all / acc_pert / pert_ratio / acc_seq
+        Do not calculate confidence statistics.
 
-        目的：研究 sigma_t（即 timestep embedding/conditioning）的影响，与 k 解耦观察。
+        Purpose: study sigma_t (timestep embedding/conditioning) independently of k.
         """
 
         if device is None:
             device = next(self.model.parameters()).device
         self.model.eval()
 
-        # --- 拿 M ---
+        # --- Get M ---
         first_batch = None
         for b in dataloader:
             first_batch = b
@@ -867,7 +857,7 @@ class Trainer:
             for kk in range(M + 1):
                 k = torch.full((B,), kk, device=device, dtype=torch.long)
 
-                # xt 的生成仍依赖 k
+                # Generating xt still depends on k
                 xt, _sigma_from_forward = self.model.DiscreteDiffusion.forward_perturb_conjugate(x0, k)  # (B,M)
                 pert_mask = (xt != x0)
                 pert_cnt = int(pert_mask.sum().item())
@@ -879,10 +869,10 @@ class Trainer:
                     sigma_t = (-alpha.log()).expand(B)  # (B,)
                     
                     sigma_t = sigma_t.unsqueeze(-1).expand(-1, M)
-                    # 如果你模型必须 [B,1,1]，就改成：
+                    # If the model requires [B,1,1], use:
                     # sigma_t = (-alpha.log()).view(1,1,1).expand(B,1,1)
 
-                    # 推理
+                    # Inference
                     try:
                         out = probs_fn(xt, sigma_t, num_beams=1)
                     except TypeError:
@@ -929,7 +919,7 @@ class Trainer:
                     st[4] += int(seq_correct.sum().item())
                     st[5] += int(seq_correct.numel())
 
-        # --- 打印 ---
+        # --- Print ---
         self.log("\n=== Recovery Accuracy over alpha_grid for each k ===")
         self.log(f"Evaluated batches: {batch_count} | M={M} | alpha_grid={list(alpha_grid)} (clamped with eps={alpha_eps})")
         self.log("-" * 120)
@@ -978,13 +968,6 @@ class Trainer:
         self.model.eval()
 
         all_results = defaultdict(list)
-        # val_progress_bar = tqdm(
-        #     dataloader,
-        #     total=len(dataloader),
-        #     miniters=int(len(dataloader) * 0.5),
-        #     desc=f"Eval - {split}",
-        #     disable=False
-        # )
         start_time = time.time()
         for batch in dataloader:
             with torch.no_grad():

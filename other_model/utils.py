@@ -29,7 +29,7 @@ def _ensure_suffix(name: str, suffix: str = ".pkl") -> str:
 def _append_tag(base: str, tag: str | None) -> str:
     if not tag or tag == "None":
         return base
-    # 简单清洗：仅保留字母数字、下划线、连字符和点
+    # Sanitize: retain only alphanumeric characters, underscores, hyphens, and dots
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(tag).strip())
     return f"{base}_{safe}" if safe else base
 
@@ -38,14 +38,14 @@ def _require_mapping(d: dict, key: str):
         raise KeyError(f"Missing required key '{key}' in config mapping.")
 
 def build_dataset_config(final_config: dict, dataset_name: str) -> dict:
-    """基于 final_config[dataset_name] 生成/整理配置；返回更新后的 final_config。"""
+    """Build or normalize configuration from final_config[dataset_name] and return final_config."""
     data_file_cfg = final_config.get(dataset_name, {})
     if not isinstance(data_file_cfg, dict):
         raise ValueError(
             f"Config for dataset '{dataset_name}' must be a mapping, got: {type(data_file_cfg)}"
         )
 
-    # ---- 必需项检查（如果你希望是必填的）----
+    # ---- Check required fields when mandatory ----
     _require_mapping(data_file_cfg, "data_path_prefix")
     _require_mapping(data_file_cfg, "raw_seq_name")
     _require_mapping(data_file_cfg, "item2codes_name")
@@ -54,22 +54,22 @@ def build_dataset_config(final_config: dict, dataset_name: str) -> dict:
     raw_seq_name: str = data_file_cfg.get("raw_seq_name")
     item2codes_name: str = data_file_cfg.get("item2codes_name")
 
-    # 可选：直接写回到 final_config（数值参数）
+    # Optionally copy numeric parameters into final_config
     for k in ("n_digits", "codebook_size"):
         if k in data_file_cfg:
             final_config[k] = data_file_cfg[k]
 
-    # tag 追加（仅当提供时）
+    # Append tags only when provided
     sent_emb_model_tag = data_file_cfg.get("sent_emb_model_tag")
     quantizer_model_tag = data_file_cfg.get("Quantizer_model_tag")
     item2codes_name = _append_tag(item2codes_name, sent_emb_model_tag)
     item2codes_name = _append_tag(item2codes_name, quantizer_model_tag)
 
-    # 统一 .pkl 后缀
+    # Normalize the .pkl suffix
     raw_seq_name = _ensure_suffix(raw_seq_name, ".pkl")
     item2codes_name = _ensure_suffix(item2codes_name, ".pkl")
 
-    # 写回名称（不带路径的纯文件名）
+    # Write back filenames without directory components
     #final_config["raw_seq_name"] = raw_seq_name
     #final_config["item2codes_name"] = item2codes_name
     
@@ -90,33 +90,30 @@ def build_dataset_config(final_config: dict, dataset_name: str) -> dict:
 
 def build_model_config(config: Dict) -> Dict:
     """
-    对通用 config 做一些后处理：
-    - 针对 T5：如果存在 presets + model_size，就从 preset 中补全模型超参。
-        优先级仍然遵守：config_dict > config_file > model/dataset/root config > preset。
+    Post-process the common config:
+    - For T5, fill model hyperparameters from presets when presets and model_size exist.
+        Override priority: config_dict > config_file > model/dataset/root config > preset.
 
     Args:
-        config: 已经 merge 完成的配置（get_config 里合并完各级 yaml/dict 之后）
-        model_name: 模型名称（
+        config: merged configuration after combining YAML and dictionary inputs in get_config
+        model_name: model name
 
     Returns:
-        dict: 处理后的配置字典（in-place 修改后再返回）
+        dict: processed configuration, modified in place and returned
     """
     logger = logging.getLogger(__name__)
 
-    # ==========================================================
-    # 1. T5 preset 展开逻辑（可选）
-    # ==========================================================
-    # 约定：如果用户在任意一个 config.yaml / config_dict 里提供了：
+    # 1. Optional T5 preset expansion
+    # Convention: if any config.yaml / config_dict provides:
     #   - model_size: "small"
     #   - presets: { tiny: {...}, small: {...}, ... }
-    # 则我们从 presets[model_size] 中读取默认超参，
-    # 并只为「尚未在 config 中出现」的字段补默认值。
-    # 这样可以完全保持原来的取用方式：
+    # Read default hyperparameters from presets[model_size],
+    # and fill only fields not already present in config.
+    # This preserves the original field access pattern:
     #   num_layers = config["num_layers"]
     #   d_model    = config["d_model"]
-    # 等等。
-    # 同时也保证覆盖优先级不被破坏。
-    # ----------------------------------------------------------
+    # and so on.
+    # It also preserves the override priority.
     if "presets" in config and "model_size" in config:
         presets = config.get("presets") or {}
         model_size = str(config.get("model_size")).strip()
@@ -140,7 +137,7 @@ def build_model_config(config: Dict) -> Dict:
                 model_size
             )
 
-        # 如果你不希望 presets 出现在最终日志 / config 里，也可以在这里删除：
+        # Remove presets here if they should not appear in the final config or logs:
         config.pop("presets", None)
     return config
 
@@ -186,17 +183,17 @@ def get_command_line_args_str():
 
 
 def get_file_name(config: dict, suffix: str = ''):
-    # 只保留时间和数据集信息，避免文件名过长
+    # Retain only time and dataset information to keep filenames short
     dataset_name = config.get("dataset", "unknown")
-    # 从run_local_time中提取日期时间信息
+    # Extract the timestamp from run_local_time
     time_str = config.get('run_local_time', 'unknown')
     
-    # 生成简短的文件名：数据集_时间
-    # 如果时间字符串包含日期时间信息，直接使用
+    # Generate a short filename: dataset_timestamp
+    # Use the timestamp directly when available
     if time_str != 'unknown':
         logfilename = "{}_{}{}".format(dataset_name, time_str, suffix)
     else:
-        # 如果没有时间信息，使用当前时间
+        # Use the current time when no timestamp is available
         current_time = get_local_time()
         logfilename = "{}_{}{}".format(dataset_name, current_time, suffix)
     
@@ -295,37 +292,37 @@ def get_model(model_name: Union[str, AbstractModel]) -> AbstractModel:
         raise ValueError(f'Model "{model_name}" not found.')
     return model_class
 
-# 注意：如果该函数与 SeqAugDataset/AbstractDataset 在同一文件，确保这两行 import 生效
+# If this function shares a file with SeqAugDataset/AbstractDataset, ensure these imports are active
 # from .dataset import AbstractDataset, SeqAugDataset
-# 或者若就在同一个 module 里，下面 getattr(current_module, ...) 也能找到
+# Classes in the same module can also be resolved using getattr(current_module, ...)
 
 def get_dataset(dataset_name: Union[str, Any], config: dict):
     """
-    按参数选择“数据划分提供方”：
-      - data_split_mode = "user_split" → 使用当前模块中的类（如 SeqAugDataset）
-      - data_split_mode = "leave_one_out" → 使用 genrec.datasets 包中的类
-    兼容 use_user_split=True/False 的旧写法。
+    Choose the data split provider based on the parameters:
+      - data_split_mode = "user_split": use classes in the current module, e.g. SeqAugDataset
+      - data_split_mode = "leave_one_out": use classes from genrec.datasets
+    Support the legacy use_user_split=True/False setting.
 
     Args:
-        dataset_name: 类名字符串，或已经构造好的数据集实例
-        config:       全局配置（内含 data_split_mode 或 use_user_split）
+        dataset_name: class name string or an existing dataset instance
+        config: global configuration containing data_split_mode or use_user_split
 
     Returns:
-        数据集“类”（未实例化），或直接返回已传入的实例
+        An uninstantiated dataset class, or the supplied instance
     """
-    # 已经是实例 → 直接返回
+    # Return an existing instance directly
     try:
-        from .dataset import AbstractDataset  # 若本函数与类在同一文件，这里也可以直接引用
+        from .dataset import AbstractDataset  # A direct reference is also possible if the function and class share a file
     except Exception:
-        # 如果相对导入不方便，可在外层替换为绝对路径导入
+        # Use an absolute import externally if relative imports are inconvenient
         pass
 
     if hasattr(dataset_name, '__class__') and \
        dataset_name.__class__.__name__ not in ('str', 'unicode', 'bytes'):
-        # 粗略判断：非字符串，且看上去是实例
+        # Heuristic: a non-string value that appears to be an instance
         return dataset_name
 
-    # 解析选择：data_split_mode / use_user_split
+    # Resolve data_split_mode / use_user_split
     mode = str(config.get('data_split_mode', '')).lower().strip()
     if not mode:
         use_user_split = config.get('use_user_split', False)
@@ -333,13 +330,13 @@ def get_dataset(dataset_name: Union[str, Any], config: dict):
                               (isinstance(use_user_split, str) and use_user_split.lower() == 'true') \
                else 'leave_one_out'
 
-    # 统一字符串
+    # Normalize strings
     if isinstance(dataset_name, bytes):
         dataset_name = dataset_name.decode('utf-8')
     if not isinstance(dataset_name, str):
         raise ValueError(f'Invalid dataset_name type: {type(dataset_name)}')
 
-    # 支持别名：当选择 user_split 时，用户即便给了其他名称，也可映射到 SeqAugDataset
+    # Support aliases in user_split mode by mapping alternative names to SeqAugDataset
     alias_local = {
         'user_split': ['SeqAugDataset', 'UserSplitDataset', 'UserSplit', 'UserSeq'],
     }
@@ -352,12 +349,12 @@ def get_dataset(dataset_name: Union[str, Any], config: dict):
             raise ValueError(f'Cannot resolve "{cls_name}" from module "{module_name}": {e}')
 
     if mode == 'user_split':
-        # 当前模块（同文件）中解析（例如 SeqAugDataset）
+        # Resolve from the current module, e.g. SeqAugDataset
         current_module = importlib.import_module(__name__)
 
-        # 若 dataset_name 不在当前模块，尝试别名映射为 SeqAugDataset
+        # Try the SeqAugDataset alias if dataset_name is not in the current module
         if not hasattr(current_module, dataset_name):
-            # 回退到默认本地类名：SeqAugDataset
+            # Fall back to the local default class name: SeqAugDataset
             dataset_name = 'SeqAugDataset'
         try:
             return getattr(current_module, dataset_name)
@@ -366,11 +363,11 @@ def get_dataset(dataset_name: Union[str, Any], config: dict):
                              f'(user_split mode). Make sure SeqAugDataset is defined.')
 
     elif mode == 'leave_one_out':
-        # 去 genrec.datasets 包内解析（保留你原先逻辑）
+        # Resolve from genrec.datasets, retaining the original logic
         try:
             return _resolve_from('genrec.datasets', dataset_name)
         except ValueError:
-            # 允许一个回退：如果用户其实想用默认 LOO 数据集名
+            # Allow fallback handling when the default LOO dataset name was intended
             raise
 
     else:
@@ -458,14 +455,14 @@ def convert_config_dict(config: dict) -> dict:
         if not isinstance(v, str):
             continue
         
-        # 🚀 修复：移除eval，使用安全的解析方法
+        # Use safe parsing instead of eval
         try:
-            # 首先检查布尔值
+            # Check boolean values first
             if v.lower() in ['true', 'false']:
                 config[key] = (v.lower() == 'true')
                 continue
             
-            # 尝试JSON解析（最安全、可嵌套）
+            # Try JSON parsing first; it supports nested values safely
             new_v = json.loads(v)
             if new_v is not None and not isinstance(
                 new_v, (str, int, float, bool, list, dict, tuple)
@@ -473,7 +470,7 @@ def convert_config_dict(config: dict) -> dict:
                 new_v = v
         except Exception:
             try:
-                # 再尝试ast.literal_eval（仅字面量）
+                # Then try ast.literal_eval for literals only
                 import ast
                 new_v = ast.literal_eval(v)
                 if new_v is not None and not isinstance(
@@ -481,7 +478,7 @@ def convert_config_dict(config: dict) -> dict:
                 ):
                     new_v = v
             except Exception:
-                # 如果都失败，保持原始字符串
+                # Keep the original string if both parsers fail
                 new_v = v
         
         config[key] = new_v
@@ -574,21 +571,21 @@ def parse_command_line_args(unparsed: List[str]) -> Dict[str, Any]:
     for text_arg in unparsed:
         if '=' not in text_arg:
             raise ValueError(f"Invalid command line argument: {text_arg}, please add '=' to separate key and value.")
-        key, value = text_arg.split('=', 1)  # 只分割第一个=，避免字典中的=被分割
+        key, value = text_arg.split('=', 1)  # Split only on the first = to preserve = characters inside dictionaries
         key = key[len('--'):]
         
-        # 🚀 修复：移除eval，使用安全的解析方法
+        # Use safe parsing instead of eval
         parsed_value = value
         try:
-            # 首先尝试JSON解析（最安全、可嵌套）
+            # Try JSON parsing first; it supports nested values safely
             parsed_value = json.loads(value)
         except Exception:
             try:
-                # 再尝试ast.literal_eval（仅字面量）
+                # Then try ast.literal_eval for literals only
                 import ast
                 parsed_value = ast.literal_eval(value)
             except Exception:
-                # 如果都失败，保持原始字符串
+                # Keep the original string if both parsers fail
                 pass
         
         args[key] = parsed_value
@@ -611,18 +608,18 @@ def init_device():
 
 def config_for_log(config: dict) -> dict:
     config = config.copy()
-    # 移除不可序列化/无意义的对象
+    # Remove non-serializable or irrelevant objects
     config.pop('device', None)
     config.pop('accelerator', None)
 
-    # TensorBoard hparams 只接受: int, float, str, bool, torch.Tensor
-    # 这里将所有非标量类型统一转换为字符串，避免类型错误
+    # TensorBoard hparams accepts only int, float, str, bool, and torch.Tensor
+    # Convert non-scalar values to strings to avoid type errors
     sanitized = {}
     for k, v in config.items():
         if isinstance(v, (int, float, str, bool)):
             sanitized[k] = v
         else:
-            # 包括 list/tuple/dict/None/numpy 类型等，统一转为字符串
+            # Convert list/tuple/dict/None/numpy values and other types to strings
             try:
                 sanitized[k] = str(v)
             except Exception:

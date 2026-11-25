@@ -1,0 +1,32 @@
+# KuaiRecV2 core dependencies.
+# Python 3.10+; use a CUDA-compatible PyTorch build for GPU training.
+torch>=2.4,<2.7
+transformers>=4.48,<4.54
+trl>=0.15,<0.17
+accelerate>=1.2,<2
+peft>=0.14,<0.16
+
+# Data processing, tokenization, and command-line interfaces.
+datasets>=2.21,<4
+numpy>=1.26,<3
+pandas>=2.2,<3
+scikit-learn>=1.4,<2
+tqdm>=4.66,<5
+fire>=0.6,<1
+PyYAML>=6,<7
+packaging>=24,<26
+tiktoken>=0.7,<1
+sentencepiece>=0.2,<0.3
+
+# Experiment tracking used by the training scripts.
+wandb>=0.19,<0.20
+
+# Optional: install separately for the corresponding functionality.
+# deepspeed>=0.15,<0.17  # Linux/CUDA: MiniOneRec/rl.sh uses DeepSpeed ZeRO-2.
+# bitsandbytes>=0.45,<0.47  # Required by rl.py's paged_adamw_32bit optimizer.
+# gradio>=5,<6  # Optional leaderboard integration; OAuth setup is deployment-specific.
+# huggingface-hub>=0.28,<1  # Explicit dependency for leaderboard Hub operations.
+# requests>=2.32,<3  # Explicit dependency for leaderboard account checks.
+# tensorboard>=2.16,<3  # Required by the non-streaming baseline's Accelerate tracker.
+# vllm  # Optional CUDA generation backend; select a version matching the custom trainer.
+# Optional LLaDA/genrec source packages are not provided as PyPI dependencies here.

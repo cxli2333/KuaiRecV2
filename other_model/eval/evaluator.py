@@ -17,7 +17,6 @@ class Evaluator:
             'mrr':  self.mrr_at_k,   
         }
 
-        #self.eos_token = self.tokenizer.eos_token
         self.maxk = max(config['topk'])
 
     def calculate_pos_index(self, preds, labels):
@@ -28,9 +27,6 @@ class Evaluator:
         pos_index = torch.zeros((preds.shape[0], self.maxk), dtype=torch.bool)
         for i in range(preds.shape[0]):
             cur_label = labels[i].tolist()
-            # if self.eos_token in cur_label:
-            #     eos_pos = cur_label.index(self.eos_token)
-            #     cur_label = cur_label[:eos_pos]
             for j in range(self.maxk):
                 cur_pred = preds[i, j].tolist()
                 if cur_pred == cur_label:
@@ -50,7 +46,7 @@ class Evaluator:
     
     def mrr_at_k(self, pos_index, k):
         """
-        pos_index: (B, maxk) 的 bool，最多一个 True
+        pos_index: boolean tensor of shape (B, maxk), with at most one True per row
         MRR@k = 1 / rank   if hit in top-k
                 0          else
         """
@@ -70,8 +66,8 @@ class Evaluator:
 
     def calculate_code_hit_ratios(self, preds, labels):
         """
-        统计 topk 内每个预测与 GT code 的命中数分布。
-        返回每个样本在 topk 内命中 c 个 code 的比例（c=0..M）。
+        Count the distribution of matching GT codes among top-K predictions.
+        Return each sample's fraction of top-K predictions matching c codes, for c=0..M.
         """
         if preds.ndim != 3 or labels.ndim != 2:
             return {}
@@ -92,8 +88,8 @@ class Evaluator:
     
     def pretty_print_legacy(self, output_results, logger=None):
         """
-        按你旧 evaluate() 的格式打印：
-        - ACC 行：HR@1, NDCG@1, MRR@1
+        Print in the original evaluate() format:
+        - ACC row: HR@1, NDCG@1, MRR@1
         - HR/NDCG/MRR @5,10,20,50
         output_results: { "recall@k": float, "ndcg@k": float, "mrr@k": float }
         """
@@ -114,11 +110,11 @@ class Evaluator:
                 if x.numel() == 1:
                     return x.item()
                 else:
-                    # 如果是向量/矩阵，就自己决定是 mean 还是别的，这里用 mean 举例
+                    # Choose an aggregation for vector/matrix values; mean is used here as an example
                     return x.mean().item()
             return float(x)
 
-        # 第一行：ACC（其实就是 HR@1 / NDCG@1 / MRR@1）
+        # First row: ACC, equivalent to HR@1 / NDCG@1 / MRR@1
         _print('{:<10s} {:<10s} {:<10s}'.format("ACC", "ACC", "ACC"))
         _print('{:<10.6f} {:<10.6f} {:<10.6f}'.format(
             _to_float(hr_list[0]), _to_float(ndcg_list[0]), _to_float(mrr_list[0])

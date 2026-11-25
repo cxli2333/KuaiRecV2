@@ -41,7 +41,7 @@ feed_forward_proj: "relu"
 
 presets:
   # ---------------------------------------------------
-  # TINY — Debug / 小规模测试
+  # TINY: debugging / small-scale tests
   # Params ≈ 4.5M
   # ---------------------------------------------------
   tiny:
@@ -56,14 +56,14 @@ presets:
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # SMALL — 官方 T5-Small
+  # SMALL: standard T5-Small
   # Params ≈ 60M
   # ---------------------------------------------------
   small:
     num_layers: 6
     num_decoder_layers: 6
     d_model: 512
-    d_ff: 2048
+    d_ff: 1024
     num_heads: 8               # 8 * 64 = 512
     d_kv: 64
     dropout_rate: 0.1
@@ -71,7 +71,7 @@ presets:
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # MEDIUM — 自定义 Medium（介于 small/base 之间）
+  # MEDIUM: custom size between small and base
   # Params ≈ 150M
   # ---------------------------------------------------
   medium:
@@ -86,7 +86,7 @@ presets:
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # BASE — 官方 T5-Base
+  # BASE: standard T5-Base
   # Params ≈ 220M
   # ---------------------------------------------------
   base:
@@ -101,7 +101,7 @@ presets:
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # LARGE — 官方 T5-Large
+  # LARGE: standard T5-Large
   # Params ≈ 770M
   # ---------------------------------------------------
   large:
@@ -116,7 +116,7 @@ presets:
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # 3B — 官方 T5-3B
+  # 3B: standard T5-3B
   # Params ≈ 3 Billion
   # ---------------------------------------------------
   "3b":
@@ -124,14 +124,14 @@ presets:
     num_decoder_layers: 24
     d_model: 1536
     d_ff: 6144
-    num_heads: 16              # 官方 3B 不严格等于 d_model = heads * d_kv
+    num_heads: 16              # Standard 3B does not strictly require d_model = heads * d_kv
     d_kv: 64
     dropout_rate: 0.1
     activation_function: "relu"
     feed_forward_proj: "relu"
 
   # ---------------------------------------------------
-  # 11B — 官方 T5-11B
+  # 11B: standard T5-11B
   # Params ≈ 11 Billion
   # ---------------------------------------------------
   "11b":

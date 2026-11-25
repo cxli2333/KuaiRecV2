@@ -28,7 +28,6 @@ class TIGER(AbstractModel):
             activation_function=config['activation_function'],
             vocab_size=config['vocab_size'],
             pad_token_id=config['padding_token'],
-            #eos_token_id=tokenizer.eos_token,
             decoder_start_token_id=config['padding_token'],
             feed_forward_proj=config['feed_forward_proj'],
             n_positions=config['max_token_seq_len'],

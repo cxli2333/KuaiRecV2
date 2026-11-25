@@ -20,8 +20,19 @@ from utils import get_config, init_seed, init_logger, init_device, \
 import numpy as np
 
 def build_train_mask_from_split(raw_dataset, split_datasets):
-     
-     
+    """
+    Build train_mask from split_datasets['train'].
+    - item_id starts at 1; 0 is PAD.
+    - mask[i-1] == True means item_id == i appears in the training set.
+    
+    Args:
+        raw_dataset: SeqAugDataset or a similar dataset with n_items/num_items/id_mapping
+        split_datasets: dictionary containing at least 'train' with seq and next columns
+    
+    Returns:
+        np.ndarray(bool) shape=(n_items,)
+    """
+    # ---------- Get the total item count ----------
     n_items = getattr(raw_dataset, 'n_items', None)
     if n_items is None:
         n_items = getattr(raw_dataset, 'num_items', None)
@@ -34,18 +45,18 @@ def build_train_mask_from_split(raw_dataset, split_datasets):
     mask = np.zeros((n_items,), dtype=bool)
     train_set = split_datasets['train']
 
-     
+    # ---------- Iterate over the training set ----------
     for ex in train_set:
-         
+        # Historical sequence seq
         seq = ex.get('seq', [])
         if hasattr(seq, 'tolist'):
             seq = seq.tolist()
         for iid in seq:
             iid = int(iid)
-            if iid > 0:   
+            if iid > 0:  # Skip PAD=0
                 mask[iid - 1] = True
 
-   
+        # Next target item
         tgt = ex.get('next', None)
         if tgt is not None:
             try:
@@ -105,7 +116,7 @@ class Pipeline:
         # Tokenizer
         if tokenizer is not None:
             if isinstance(tokenizer, type):
-                #  
+                # pid2sid requires an additional argument
                 #self.tokenizer = tokenizer(self.config, self.raw_dataset)
                 self.tokenizer = tokenizer(self.config, self.raw_dataset, n_digits=self.config['n_digits'], codebook_size=self.config['codebook_size'])
             else:
@@ -161,7 +172,7 @@ class Pipeline:
             collate_fn=self.tokenizer.collate_fn['test']
         )
 
- 
+        # Run a single-batch overfitting experiment first
         #self.trainer.overfit_one_batch(train_dataloader, steps=500, log_every=50)
         best_epoch, best_val_score = self.trainer.fit(train_dataloader, val_dataloader)
 

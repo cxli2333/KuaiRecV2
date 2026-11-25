@@ -29,7 +29,6 @@ if __name__ == '__main__':
         model_name=args.model,
         dataset_name=args.dataset,
         category=args.category,
-        #tokenizer=IdentTokenizer,
         tokenizer=VanillaTokenizer,
         checkpoint_path=args.checkpoint,
         config_dict=command_line_configs

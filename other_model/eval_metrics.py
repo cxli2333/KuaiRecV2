@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 
 
 def parse_sid_tokens(sid_str: str) -> List[str]:
-    """解析 SID token 字符串。"""
+    """Parse a SID token string."""
     clean_str = sid_str.replace("<sid_start_flag>", "").replace("<sid_end_flag>", "")
     clean_str = clean_str.replace("<sid_begin>", "").replace("<sid_end>", "")
     tokens = re.findall(r'<([^>]+)>', clean_str)
@@ -20,7 +20,7 @@ def parse_sid_tokens(sid_str: str) -> List[str]:
 
 def get_path_diversity(predict_list: List[str], max_depth: int = 8) -> np.ndarray:
     """
-    计算单个样本在每一层的累计唯一路径数 (Prefix Counts)。
+    Calculate cumulative unique prefix counts at each level for one sample.
     """
     if not predict_list:
         return np.zeros(max_depth)
@@ -41,7 +41,7 @@ def get_path_diversity(predict_list: List[str], max_depth: int = 8) -> np.ndarra
 
 def calculate_layer_metrics(predict_list: List[str], max_depth: int = 8):
     """
-    计算每一层的 token-level 多样性指标。
+    Calculate token-level diversity metrics at each level.
     """
     if not predict_list:
         return np.zeros(max_depth), np.zeros(max_depth), [Counter() for _ in range(max_depth)]
@@ -74,7 +74,7 @@ def calculate_layer_metrics(predict_list: List[str], max_depth: int = 8):
 
 def calculate_topk_layer_diversity(predict_list: List[str], topk: int, max_depth: int = 8) -> np.ndarray:
     """
-    计算 top-K 结果中每一层的唯一 token 数。
+    Calculate the number of unique tokens at each level in the top-K results.
     """
     if not predict_list or topk > len(predict_list):
         return np.zeros(max_depth)
@@ -96,7 +96,7 @@ def calculate_topk_layer_diversity(predict_list: List[str], topk: int, max_depth
 
 def calculate_intra_list_diversity(predict_list: List[str], max_depth: int = 8) -> float:
     """
-    计算 Intra-List Diversity (ILD)。
+    Calculate Intra-List Diversity (ILD).
     """
     if len(predict_list) < 2:
         return 0.0
@@ -127,14 +127,14 @@ def calculate_intra_list_diversity(predict_list: List[str], max_depth: int = 8) 
 
 
 def gini_coefficient(x: List[float]) -> float:
-    """计算基尼系数，只基于传入的频次列表（被推荐过的物品）"""
+    """Calculate Gini using only the supplied frequency list of recommended items."""
     x = np.array(x, dtype=np.float64)
     if len(x) == 0:
         return 0.0
-    x += 1e-7  # 避免除零
+    x += 1e-7  # Avoid division by zero
     n = len(x)
     s = x.sum()
-    r = np.argsort(np.argsort(-x))  # 降序排名
+    r = np.argsort(np.argsort(-x))  # Descending ranking
     return 1 - (2.0 * (r * x).sum() + s) / (n * s)
 
 
@@ -146,17 +146,17 @@ def calculate_metrics(
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
-    计算推荐系统的各种评估指标。
+    Calculate recommendation evaluation metrics.
     
     Args:
-        path: 预测结果文件路径（JSON 格式）
-        item_path: 物品文件路径
-        topk_list: Top-K 列表
-        max_depth: 最大深度
-        verbose: 是否打印详细信息
+        path: path to the prediction results file in JSON format
+        item_path: path to the item file
+        topk_list: list of Top-K values
+        max_depth: maximum depth
+        verbose: whether to print detailed information
         
     Returns:
-        Dict[str, Any]: 评估指标字典
+        Dict[str, Any]: evaluation metric dictionary
     """
     if topk_list is None:
         topk_list = [1, 5, 10, 20, 50]
@@ -169,7 +169,7 @@ def calculate_metrics(
     else:
         item_path_txt = f"{item_path}.txt"
     
-    # 加载物品文件
+    # Load item files
     if os.path.exists(item_path_txt):
         with open(item_path_txt, 'r') as f:
             items = f.readlines()
@@ -183,7 +183,7 @@ def calculate_metrics(
     if verbose:
         print(f"Item Size: {num_total_items}")
 
-    # 构建物品字典
+    # Build the item dictionary
     item_dict = {}
     for i, name in enumerate(item_names):
         if name not in item_dict:
@@ -205,7 +205,7 @@ def calculate_metrics(
             print(f"Warning: Empty prediction file: {p}")
             continue
         
-        # 检查数据格式
+        # Check the data format
         if 'predict' not in test_data[0]:
             print(f"Error: 'predict' key not found in {p}")
             continue
@@ -220,7 +220,7 @@ def calculate_metrics(
             print(f"n_beam: {n_beam}")
             print(f"K: {valid_topk}")
         
-        # 初始化指标数组
+        # Initialize metric arrays
         ALLNDCG = np.zeros(len(valid_topk))
         ALLHR = np.zeros(len(valid_topk))
         ALLRECALL = np.zeros(len(valid_topk))
@@ -235,14 +235,14 @@ def calculate_metrics(
         TOPK_LAYER_DIVERSITY = {k: np.zeros(max_depth) for k in valid_topk}
         global_counts = {k: defaultdict(int) for k in valid_topk}
         
-        CC = 0  # 未找到的物品计数
+        CC = 0  # Count items not found
 
         for index, sample in enumerate(tqdm(text, desc="Calculating metrics", disable=not verbose)):
-            # 路径多样性
+            # Path diversity
             sample_path_counts = get_path_diversity(sample, max_depth=max_depth)
             ALL_PATH_COUNTS += sample_path_counts
             
-            # Token-level 多样性
+            # Token-level diversity
             layer_unique, layer_entropy, _ = calculate_layer_metrics(sample, max_depth=max_depth)
             ALL_LAYER_UNIQUE += layer_unique
             ALL_LAYER_ENTROPY += layer_entropy
@@ -256,7 +256,7 @@ def calculate_metrics(
                 topk_div = calculate_topk_layer_diversity(sample, k, max_depth=max_depth)
                 TOPK_LAYER_DIVERSITY[k] += topk_div
 
-            # 获取目标物品
+            # Get the target item
             if 'output' not in test_data[index]:
                 continue
                 
@@ -266,7 +266,7 @@ def calculate_metrics(
             else:
                 target_item = target.strip(" \n\"")
             
-            # 找到目标物品在预测中的位置
+            # Find the target item's position in the predictions
             minID = 1000000
             for i, pred in enumerate(sample):
                 if pred not in item_dict:
@@ -276,7 +276,7 @@ def calculate_metrics(
                     minID = i 
                     break
 
-            # 计算各 Top-K 指标
+            # Calculate metrics for each Top-K
             for index_k, topk in enumerate(valid_topk):
                 if minID < topk:
                     ALLNDCG[index_k] += 1 / math.log(minID + 2, 2) 
@@ -290,11 +290,11 @@ def calculate_metrics(
                     else:
                         ALLAUC[index_k] += 1.0
                         
-                # 统计全局物品出现次数
+                # Count global item occurrences
                 for item in sample[:topk]:
                     global_counts[topk][item] += 1
 
-        # 计算 Coverage 和 Gini
+        # Calculate Coverage and Gini
         ALLCOVERAGE = []
         ALLGINI = []
 
@@ -307,32 +307,31 @@ def calculate_metrics(
             gini = gini_coefficient(counts_list) if counts_list else 0
             ALLGINI.append(gini)
 
-        # 构建最终结果
+        # Build the final result
         final_metrics = {
-            # 基础指标
+            # Basic metrics
             "NDCG": (ALLNDCG / num_samples).tolist(),
             "HR": (ALLHR / num_samples).tolist(),
             "Recall": (ALLRECALL / num_samples).tolist(),
             "MRR": (ALLMRR / num_samples).tolist(),
             "AUC": (ALLAUC / num_samples).tolist(),
             
-            # 系统级多样性
+            # System-level diversity
             "Coverage": ALLCOVERAGE,
             "Gini": ALLGINI,
             
-            # Token-level 多样性指标
+            # Token-level diversity metrics
             "Avg_Path_Diversity": (ALL_PATH_COUNTS / num_samples).tolist(),
             "Avg_Layer_Unique_Tokens": (ALL_LAYER_UNIQUE / num_samples).tolist(),
             "Avg_Layer_Entropy": (ALL_LAYER_ENTROPY / num_samples).tolist(),
             "Avg_Intra_List_Diversity": ALL_ILD / num_samples,
             
-            # Top-K 的 layer diversity
+            # Top-K layer diversity
             "TopK_Layer_Diversity": {
                 f"Top{k}": (TOPK_LAYER_DIVERSITY[k] / num_samples).tolist() 
                 for k in valid_topk
             },
             
-            # 元信息
             "num_samples": num_samples,
             "n_beam": n_beam,
             "valid_topk": valid_topk,
@@ -359,7 +358,7 @@ def calculate_metrics(
         
         result_dict[p] = final_metrics
     
-    # 如果只有一个文件，直接返回结果
+    # Return the result directly when there is only one file
     if len(result_dict) == 1:
         return list(result_dict.values())[0]
     
@@ -373,16 +372,16 @@ def calculate_metrics_from_predictions(
     max_depth: int = 8
 ) -> Dict[str, Any]:
     """
-    直接从预测列表计算指标（不需要文件）。
+    Calculate metrics directly from prediction lists without reading files.
     
     Args:
-        predictions: 预测结果列表，每个元素包含 'predict' 和 'output'
-        item_list: 物品列表
-        topk_list: Top-K 列表
-        max_depth: 最大深度
+        predictions: result list whose entries contain 'predict' and 'output'
+        item_list: list of items
+        topk_list: list of Top-K values
+        max_depth: maximum depth
         
     Returns:
-        Dict[str, Any]: 评估指标字典
+        Dict[str, Any]: evaluation metric dictionary
     """
     if topk_list is None:
         topk_list = [1, 5, 10, 20, 50]
@@ -395,7 +394,6 @@ def calculate_metrics_from_predictions(
     n_beam = len(text[0]) if text else 0
     valid_topk = [k for k in topk_list if k <= n_beam]
     
-    # 初始化指标
     ALLNDCG = np.zeros(len(valid_topk))
     ALLHR = np.zeros(len(valid_topk))
     ALLMRR = np.zeros(len(valid_topk))
@@ -407,13 +405,13 @@ def calculate_metrics_from_predictions(
     global_counts = {k: defaultdict(int) for k in valid_topk}
 
     for index, sample in enumerate(text):
-        # 多样性指标
+        # Diversity metrics
         ALL_PATH_COUNTS += get_path_diversity(sample, max_depth)
         layer_unique, _, _ = calculate_layer_metrics(sample, max_depth)
         ALL_LAYER_UNIQUE += layer_unique
         ALL_ILD += calculate_intra_list_diversity(sample, max_depth)
         
-        # 准确性指标
+        # Accuracy metrics
         target = predictions[index].get('output', '')
         if isinstance(target, list):
             target = target[0]
@@ -447,27 +445,27 @@ def calculate_metrics_from_predictions(
         "valid_topk": valid_topk
     }
 
-# eval_metrics.py 末尾添加
+# Add at the end of eval_metrics.py
 
 def calculate_metrics_from_model_outputs(
-    predictions: List[List[str or int]],
-    targets: List[List[str or int]],
+    predictions: List[List[str]],
+    targets: List[str],
     item_list: List[str] = None,
     topk_list: List[int] = None,
     max_depth: int = 8
 ) -> Dict[str, Any]:
     """
-    从模型输出直接计算指标（适配训练过程调用）。
+    Calculate metrics directly from model outputs for use during training.
     
     Args:
-        predictions: 预测结果列表，每个元素是一个候选列表 [candidate1, candidate2, ...]
-        targets: 目标物品列表
-        item_list: 所有物品列表（用于计算 coverage）
-        topk_list: Top-K 列表
-        max_depth: 最大深度
+        predictions: list of candidate lists [candidate1, candidate2, ...]
+        targets: list of target items
+        item_list: full item list used to calculate coverage
+        topk_list: list of Top-K values
+        max_depth: maximum depth
         
     Returns:
-        Dict[str, Any]: 评估指标字典
+        Dict[str, Any]: evaluation metric dictionary
     """
     if topk_list is None:
         topk_list = [1, 5, 10, 20, 50]
@@ -484,7 +482,6 @@ def calculate_metrics_from_model_outputs(
     if not valid_topk:
         valid_topk = [min(topk_list[0], n_beam)] if n_beam > 0 else [1]
     
-    # 初始化指标
     ALLNDCG = np.zeros(len(valid_topk))
     ALLHR = np.zeros(len(valid_topk))
     ALLMRR = np.zeros(len(valid_topk))
@@ -502,7 +499,7 @@ def calculate_metrics_from_model_outputs(
         if not sample:
             continue
             
-        # 多样性指标
+        # Diversity metrics
         sample_path_counts = get_path_diversity(sample, max_depth)
         ALL_PATH_COUNTS += sample_path_counts
         
@@ -516,12 +513,12 @@ def calculate_metrics_from_model_outputs(
             topk_div = calculate_topk_layer_diversity(sample, k, max_depth)
             TOPK_LAYER_DIVERSITY[k] += topk_div
         
-        # 准确性指标
+        # Accuracy metrics
         target = targets[index] if index < len(targets) else ""
         if isinstance(target, list):
             target = target[0] if target else ""
         
-        # 找到目标在预测中的位置
+        # Find the target's position in the predictions
         minID = 1000000
         for i, pred in enumerate(sample):
             if pred == target:
@@ -538,7 +535,7 @@ def calculate_metrics_from_model_outputs(
             for item in sample[:topk]:
                 global_counts[topk][item] += 1
     
-    # Coverage 和 Gini
+    # Coverage and Gini
     ALLCOVERAGE = []
     ALLGINI = []
     
@@ -552,17 +549,17 @@ def calculate_metrics_from_model_outputs(
         ALLGINI.append(gini)
     
     return {
-        # 准确性指标
+        # Accuracy metrics
         "NDCG": (ALLNDCG / num_samples).tolist(),
         "HR": (ALLHR / num_samples).tolist(),
         "Recall": (ALLRECALL / num_samples).tolist(),
         "MRR": (ALLMRR / num_samples).tolist(),
         
-        # 系统级多样性
+        # System-level diversity
         "Coverage": ALLCOVERAGE,
         "Gini": ALLGINI,
         
-        # Token-level 多样性
+        # Token-level diversity
         "Avg_Path_Diversity": (ALL_PATH_COUNTS / num_samples).tolist(),
         "Avg_Layer_Unique_Tokens": (ALL_LAYER_UNIQUE / num_samples).tolist(),
         "Avg_Layer_Entropy": (ALL_LAYER_ENTROPY / num_samples).tolist(),
@@ -574,127 +571,10 @@ def calculate_metrics_from_model_outputs(
             for k in valid_topk
         },
         
-        # 元信息
         "num_samples": num_samples,
         "n_beam": n_beam,
         "valid_topk": valid_topk
     }
-
-def calculate_multi_target_metrics_from_model_outputs(
-    predictions: List[List[Any]],
-    targets: List[List[Any]],
-    topk_list: List[int] = None,
-) -> Dict[str, Any]:
-    """
-    full_user 模式下的多目标 ranking 指标计算。
-
-    Args:
-        predictions:
-            每个样本的 beam search 候选列表，按排名排序
-            例如:
-                [
-                    [item1, item2, ..., item50],
-                    [item3, item8, ..., item20],
-                    ...
-                ]
-
-        targets:
-            每个样本的真实目标列表（未来交互序列）
-            例如:
-                [
-                    [gt1, gt2, ..., gt80],
-                    [gt3, gt5, ..., gt60],
-                    ...
-                ]
-
-        topk_list:
-            要计算的 topK 列表，例如 [10, 20, 50]
-
-    Returns:
-        dict
-    """
-    if topk_list is None:
-        topk_list = [1, 5, 10, 20, 50]
-
-    num_samples = len(predictions)
-    if num_samples == 0:
-        return {"error": "No predictions provided"}
-
-    # 自动过滤非法 topk
-    max_pred_len = max((len(x) for x in predictions if x), default=0)
-    valid_topk = [k for k in topk_list if k <= max_pred_len]
-    if not valid_topk:
-        valid_topk = [max_pred_len] if max_pred_len > 0 else [1]
-
-    all_ndcg = np.zeros(len(valid_topk), dtype=np.float64)
-    all_hr = np.zeros(len(valid_topk), dtype=np.float64)
-    all_recall = np.zeros(len(valid_topk), dtype=np.float64)
-    all_mrr = np.zeros(len(valid_topk), dtype=np.float64)
-
-    valid_samples = 0
-
-    for idx, pred_list in enumerate(predictions):
-        if not pred_list:
-            continue
-
-        target_list = targets[idx] if idx < len(targets) else []
-        if not target_list:
-            continue
-
-        valid_samples += 1
-
-        for topk_idx, topk in enumerate(valid_topk):
-            pred_topk = pred_list[:topk]
-            target_topk = target_list[:topk]
-            target_set = set(target_topk)
-
-            if len(target_set) == 0:
-                continue
-
-            hits = 0
-            dcg = 0.0
-            mrr = 0.0
-
-            for rank, pred in enumerate(pred_topk, start=1):
-                if pred in target_set:
-                    hits += 1
-                    dcg += 1.0 / math.log2(rank + 1)
-                    if mrr == 0.0:
-                        mrr = 1.0 / rank
-
-            ideal_hits = min(len(target_set), topk)
-            idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))
-            ndcg = dcg / idcg if idcg > 0 else 0.0
-
-            hr = 1.0 if hits > 0 else 0.0
-            recall = hits / len(target_set)
-
-            all_ndcg[topk_idx] += ndcg
-            all_hr[topk_idx] += hr
-            all_recall[topk_idx] += recall
-            all_mrr[topk_idx] += mrr
-
-    if valid_samples == 0:
-        return {
-            "NDCG": [0.0 for _ in valid_topk],
-            "HR": [0.0 for _ in valid_topk],
-            "Recall": [0.0 for _ in valid_topk],
-            "MRR": [0.0 for _ in valid_topk],
-            "num_samples": num_samples,
-            "valid_samples": 0,
-            "valid_topk": valid_topk,
-        }
-
-    return {
-        "NDCG": (all_ndcg / valid_samples).tolist(),
-        "HR": (all_hr / valid_samples).tolist(),
-        "Recall": (all_recall / valid_samples).tolist(),
-        "MRR": (all_mrr / valid_samples).tolist(),
-        "num_samples": num_samples,
-        "valid_samples": valid_samples,
-        "valid_topk": valid_topk,
-    }
-
 
 
 if __name__ == '__main__':

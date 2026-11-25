@@ -2,8 +2,8 @@
 # All rights reserved.
 
 """
-Streaming Tokenizer - 专为流式训练设计的分词器
-直接从 StreamingInteractionDataset 构建 item-to-SID 映射，无需预先生成 pkl 文件
+Streaming Tokenizer: a tokenizer designed for streaming training
+Build item-to-SID mappings directly from StreamingInteractionDataset without precomputed pickle files
 """
 
 import os
@@ -11,28 +11,14 @@ import torch
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from logging import getLogger
-from torch.utils.data import Dataset
-
-BEHAVIOR_COLS = [
-    "is_click",
-    "is_long_view",
-    "is_like",
-    "is_follow",
-    "is_forward",
-    "is_comment",
-    "is_hate",
-    "is_search",
-    "is_profile_enter",
-]
 
 
 class StreamingTokenizer:
     """
-    流式训练专用分词器
-    从 StreamingInteractionDataset 动态构建词表和映射
+    Tokenizer for streaming training
+    Build vocabulary and mappings dynamically from StreamingInteractionDataset
     """
     
-    # 特殊 token
     SPECIAL_TOKENS = {
         '[PAD]': 0,
         '[BOS]': 1,
@@ -41,7 +27,6 @@ class StreamingTokenizer:
         '[UNK]': 4,
     }
     
-    # SID 相关 token
     SID_TOKENS = {
         '<sid_begin>': 5,
         '<sid_end>': 6,
@@ -55,13 +40,13 @@ class StreamingTokenizer:
         codebook_size: int = 512
     ):
         """
-        初始化分词器。
+        Initialize the tokenizer.
         
         Args:
-            config: 配置字典
-            dataset: StreamingInteractionDataset 实例
-            n_digits: SID 层数（默认 8 层）
-            codebook_size: 每层的 codebook 大小（默认 512）
+            config: configuration dictionary
+            dataset: StreamingInteractionDataset instance
+            n_digits: number of SID levels, default 8
+            codebook_size: codebook size at each level, default 512
         """
         self.config = config
         self.dataset = dataset
@@ -69,22 +54,14 @@ class StreamingTokenizer:
         self.codebook_size = codebook_size
         self.logger = getLogger()
         
-        # 序列长度配置
         self.max_item_seq_len = config.get('max_item_seq_len', 50)
         self.max_token_seq_len = config.get('max_token_seq_len', 512)
         self.pad_order = config.get('pad_order', 'left')
-
-        self.max_seq_len = dataset.max_seq_len if hasattr(dataset, 'max_seq_len') else 50
-        self.min_seq_len = dataset.min_seq_len if hasattr(dataset, 'min_seq_len') else 1
         
-        # 构建词表
         self._build_vocabulary()
         
-        # 构建 item-to-SID 映射
         self._build_item_to_sid_mapping()
-        self.dataset = None  # 释放 dataset 引用
-
-        # collate 函数
+        
         self.collate_fn = {
             'train': self._collate_train,
             'val': self._collate_eval,
@@ -98,24 +75,24 @@ class StreamingTokenizer:
         self.logger.info(f"  - Codebook size: {self.codebook_size}")
 
     def _build_vocabulary(self):
-        """构建词表。"""
+        """Build the vocabulary."""
         self.token2id = {}
         self.id2token = {}
         
-        # 1. 添加特殊 token
+        # 1. Add special tokens
         for token, idx in self.SPECIAL_TOKENS.items():
             self.token2id[token] = idx
             self.id2token[idx] = token
         
-        # 2. 添加 SID 特殊 token
+        # 2. Add SID special tokens
         for token, idx in self.SID_TOKENS.items():
             self.token2id[token] = idx
             self.id2token[idx] = token
         
-        # 3. SID 层级 token 的起始位置
+        # 3. Starting offset for hierarchical SID tokens
         self.sid_offset = len(self.SPECIAL_TOKENS) + len(self.SID_TOKENS)
         
-        # 4. 添加 SID 层级 token: <a_0>, <a_1>, ..., <h_511>
+        # 4. Add hierarchical SID tokens: <a_0>, <a_1>, ..., <h_511>
         level_chars = 'abcdefgh'
         current_idx = self.sid_offset
         
@@ -131,7 +108,7 @@ class StreamingTokenizer:
 
     def _build_item_to_sid_mapping(self):
         self.item2sid = {}  # item_id -> List[token_id]
-        self.sid2item = {}  # tuple(token_ids) -> List[item_id]  # 改为列表！
+        self.sid2item = {}  # tuple(token_ids) -> List[item_id]  # Store a list
         
         for item_id in self.dataset.item_data.keys():
             sid_tokens = self.dataset.get_item_sid_tokens(item_id)
@@ -144,36 +121,46 @@ class StreamingTokenizer:
             key = tuple(token_ids)
             if key not in self.sid2item:
                 self.sid2item[key] = []
-            self.sid2item[key].append(item_id)  # 追加而不是覆盖
+            self.sid2item[key].append(item_id)  # Append rather than overwrite
         
-        # 统计冲突
         conflicts = sum(1 for v in self.sid2item.values() if len(v) > 1)
         self.logger.info(f"Built item-to-SID mapping for {len(self.item2sid)} items")
-        self.logger.info(f"SID collisions: {conflicts} ({conflicts*100/len(self.sid2item):.2f}%)")
+        conflict_ratio = conflicts * 100 / len(self.sid2item) if self.sid2item else 0.0
+        self.logger.info(f"SID collisions: {conflicts} ({conflict_ratio:.2f}%)")
 
 
     def _convert_sid_tokens_to_ids(self, sid_tokens: List[str]) -> List[int]:
-        """将 SID token 字符串列表转换为 token ID 列表。"""
+        """Convert a list of SID token strings to token IDs."""
         token_ids = []
         
         for token in sid_tokens:
             if token in self.token2id:
                 token_ids.append(self.token2id[token])
             else:
-                # 未知 token，使用 UNK
                 token_ids.append(self.SPECIAL_TOKENS['[UNK]'])
         
         return token_ids
 
-    def tokenize(self, datasets):
+    def tokenize(self, datasets: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Tokenize datasets.
+        
+        Args:
+            datasets: dictionary containing train, val, and test datasets
+            
+        Returns:
+            Dictionary of tokenized datasets
+        """
         tokenized = {}
-        for split, ds in datasets.items():
-            self.logger.info(f"Tokenizing {split} ({len(ds)} samples)...")
-            tokenized[split] = self._tokenize_split(ds, split)
+        
+        for split_name, dataset in datasets.items():
+            self.logger.info(f"Tokenizing {split_name} set ({len(dataset)} samples)...")
+            tokenized[split_name] = self._tokenize_split(dataset, split_name)
+        
         return tokenized
 
     def _tokenize_split(self, dataset, split_name: str):
-        """对单个数据集划分进行分词。"""
+        """Tokenize one dataset split."""
         tokenized_samples = []
         
         for sample in dataset:
@@ -183,141 +170,125 @@ class StreamingTokenizer:
         
         return tokenized_samples
 
-    def _tokenize_sample(self, sample: Dict, split_name: str) -> Optional[Dict]:
-        history = sample.get('history_item_ids', [])
-        target_item = sample.get('target_item')
+    def _tokenize_sample(self, sample: Dict, split_name: str, debug_sample_id=-1) -> Optional[Dict]:
+        """
+        Tokenize one sample.
+        
+        Input format:
+            sample = {
+                'user': user_id,
+                'seq': [item_id, item_id, ...],  # Historical sequence
+                'len_seq': int,
+                'next': item_id,  # Target item
+                'target_item': item_id
+            }
+        
+        Output format:
+            {
+                'input_ids': [token_id, ...],  # Input sequence token IDs
+                'attention_mask': [1, 1, ...],
+                'labels': [token_id, ...],  # Target item's SID token IDs
+                'target_item': item_id,
+                'user': user_id
+            }
+        """
+        user = sample['user']
+        seq = sample['seq']
+        target_item = sample['target_item']
 
-        # 先按 item 维度截断，保留最近的历史
-        max_history_items = max(1, (self.max_token_seq_len - self.n_digits) // self.n_digits)
-        if len(history) > max_history_items:
-            history = history[-max_history_items:]
 
-        if len(history) < self.min_seq_len:
-            return None
-
-        if target_item not in self.item2sid:
-            return None
-
-        input_token_ids = []
-        for item_id in history:
+        # 1. Convert history to token IDs
+        input_token_ids = [self.SPECIAL_TOKENS['[BOS]']]
+        
+        for item_id in seq:
+            if item_id == 0:  # Skip padding
+                continue
+            
             if item_id in self.item2sid:
-                input_token_ids.extend(self.item2sid[item_id])
-
-        if len(input_token_ids) == 0:
+                # Add the item's SID tokens
+                item_sid_ids = self.item2sid[item_id]
+                input_token_ids.extend(item_sid_ids)
+                input_token_ids.append(self.SPECIAL_TOKENS['[SEP]'])
+        
+        # 2. Truncate or pad the input sequence
+        if len(input_token_ids) > self.max_token_seq_len - 1:
+            input_token_ids = input_token_ids[-(self.max_token_seq_len - 1):]
+        
+        input_token_ids.append(self.SPECIAL_TOKENS['[EOS]'])
+        
+        # 3. Padding
+        attention_mask = [1] * len(input_token_ids)
+        
+        if len(input_token_ids) < self.max_token_seq_len:
+            pad_len = self.max_token_seq_len - len(input_token_ids)
+            if self.pad_order == 'left':
+                input_token_ids = [self.padding_token] * pad_len + input_token_ids
+                attention_mask = [0] * pad_len + attention_mask
+            else:
+                input_token_ids = input_token_ids + [self.padding_token] * pad_len
+                attention_mask = attention_mask + [0] * pad_len
+        
+        # 4. Target item's SID tokens as labels
+        if target_item in self.item2sid:
+            labels = self.item2sid[target_item].copy()  # Make a copy
+            #labels.append(self.SPECIAL_TOKENS['[EOS]'])
+        else:
+            # Skip samples whose target item is outside the vocabulary
             return None
+        
 
-        # 再做一次 token 级保险截断
-        max_history_tokens = self.max_token_seq_len - self.n_digits
-        if len(input_token_ids) > max_history_tokens:
-            input_token_ids = input_token_ids[-max_history_tokens:]
-
-        labels = self.item2sid[target_item].copy()
-
-        tokenized = {
+        return {
             'input_ids': input_token_ids,
+            'attention_mask': attention_mask,
             'labels': labels,
             'target_item': target_item,
-            'user': sample.get('user_id'),
-            'user_id': sample.get('user_id'),
+            'user': user
         }
-
-        # 保留 sample_idx（如果上游已经加了）
-        if 'sample_idx' in sample:
-            tokenized['sample_idx'] = sample['sample_idx']
-
-        # 保留行为列（如果原 sample 里有）
-        for col in BEHAVIOR_COLS:
-            if col in sample:
-                tokenized[col] = int(sample.get(col, 0))
-
-        return tokenized
-
-
-
 
     def _collate_train(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
-        """训练数据的 collate 函数。"""
-        return self._collate_batch(batch, include_meta=False)
+        """Training data collate function."""
+        return self._collate_batch(batch)
 
     def _collate_eval(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
-        """评估数据的 collate 函数。"""
-        return self._collate_batch(batch, include_meta=True)
+        """Evaluation data collate function."""
+        return self._collate_batch(batch)
 
-    def _collate_batch(self, batch, include_meta: bool = False):
-        """
-        兼容 user_id / user 字段
-        只在这里动态生成 attention_mask
-
-        include_meta=False: 训练时只返回模型需要的字段
-        include_meta=True: 评估时额外返回 sample_idx / target_item / behavior labels
-        """
-        batch = [b for b in batch if b is not None]
-        if len(batch) == 0:
-            return None
-
-        max_input_len = max(len(s['input_ids']) for s in batch)
+    def _collate_batch(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
+        """Collate a batch of samples into tensors."""
+        input_ids = torch.tensor([s['input_ids'] for s in batch], dtype=torch.long)
+        attention_mask = torch.tensor([s['attention_mask'] for s in batch], dtype=torch.long)
+        
+        # Pad labels to equal lengths
         max_label_len = max(len(s['labels']) for s in batch)
-
-        input_ids = []
-        attention_mask = []
         labels = []
-        users = []
-
         for s in batch:
-            inp = s['input_ids']
-            lab = s['labels']
-
-            # pad input
-            pad_len = max_input_len - len(inp)
-            input_ids.append(inp + [self.SPECIAL_TOKENS['[PAD]']] * pad_len)
-            attention_mask.append([1] * len(inp) + [0] * pad_len)
-
-            # pad labels with -100
-            lab_pad = max_label_len - len(lab)
-            labels.append(lab + [-100] * lab_pad)
-
-            uid = s.get('user_id', s.get('user'))
-            users.append(uid if uid is not None else -1)
-
-        output = {
-            'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'attention_mask': torch.tensor(attention_mask, dtype=torch.long),
-            'labels': torch.tensor(labels, dtype=torch.long),
-            'users': torch.tensor(users, dtype=torch.long),
+            label = s['labels']
+            if len(label) < max_label_len:
+                # Pad with -100, which CrossEntropyLoss ignores
+                label = label + [-100] * (max_label_len - len(label))
+            labels.append(label)
+        labels = torch.tensor(labels, dtype=torch.long)
+        
+        target_items = torch.tensor([s['target_item'] for s in batch], dtype=torch.long)
+        users = torch.tensor([s['user'] for s in batch], dtype=torch.long)
+        
+        return {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'labels': labels,
+            'target_item': target_items,
+            'user': users
         }
-
-        # 只有 eval/val/test 才透传 metadata，避免影响训练
-        if include_meta:
-            if 'sample_idx' in batch[0]:
-                output['sample_idx'] = torch.tensor(
-                    [int(s['sample_idx']) for s in batch],
-                    dtype=torch.long
-                )
-
-            if 'target_item' in batch[0]:
-                output['target_item'] = [s.get('target_item') for s in batch]
-
-            for col in BEHAVIOR_COLS:
-                if col in batch[0]:
-                    output[col] = torch.tensor(
-                        [int(s.get(col, 0)) for s in batch],
-                        dtype=torch.long
-                    )
-
-        return output
-
-
-
 
     def decode_item_tokens(self, token_ids) -> str:
         """
-        将 token IDs 解码为物品的 SID 字符串。
+        Decode token IDs to an item's SID string.
         
         Args:
-            token_ids: token ID 序列（可以是 Tensor 或 List）
+            token_ids: token ID sequence as a tensor or list
             
         Returns:
-            str: SID 字符串，如 '<sid_begin><a_171><b_450>...<sid_end>'
+            str: SID string such as '<sid_begin><a_171><b_450>...<sid_end>'
         """
         if hasattr(token_ids, 'tolist'):
             token_ids = token_ids.tolist()
@@ -326,7 +297,7 @@ class StreamingTokenizer:
         for tid in token_ids:
             if tid in self.id2token:
                 token = self.id2token[tid]
-                # 跳过 padding 和其他非 SID token
+                # Skip padding and other non-SID tokens
                 if token not in ['[PAD]', '[BOS]', '[EOS]', '[SEP]', '[UNK]']:
                     decoded_tokens.append(token)
         
@@ -334,13 +305,13 @@ class StreamingTokenizer:
 
     def decode_input_tokens(self, token_ids) -> str:
         """
-        将输入 token IDs 解码为可读字符串。
+        Decode input token IDs to a readable string.
         
         Args:
-            token_ids: token ID 序列
+            token_ids: token ID sequence
             
         Returns:
-            str: 解码后的字符串
+            str: decoded string
         """
         if hasattr(token_ids, 'tolist'):
             token_ids = token_ids.tolist()
@@ -356,14 +327,14 @@ class StreamingTokenizer:
 
     def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
         """
-        通用解码方法。
+        General decoding method.
         
         Args:
-            token_ids: token ID 序列
-            skip_special_tokens: 是否跳过特殊 token
+            token_ids: token ID sequence
+            skip_special_tokens: whether to skip special tokens
             
         Returns:
-            str: 解码后的字符串
+            str: decoded string
         """
         if hasattr(token_ids, 'tolist'):
             token_ids = token_ids.tolist()
@@ -382,13 +353,13 @@ class StreamingTokenizer:
 
     def encode_item(self, item_id: int) -> List[int]:
         """
-        将物品 ID 编码为 SID token IDs。
+        Encode an item ID as SID token IDs.
         
         Args:
-            item_id: 物品 ID
+            item_id: item ID
             
         Returns:
-            List[int]: token ID 列表
+            List[int]: token ID list
         """
         if item_id in self.item2sid:
             return self.item2sid[item_id]
@@ -398,19 +369,17 @@ class StreamingTokenizer:
         key = tuple(sid_token_ids)
         items = self.sid2item.get(key, [])
         if items:
-            return items[0]  # 返回第一个，或者可以返回所有
+            return items[0]  # Return the first item, or optionally all items
         return None
 
 
     def get_all_item_sids(self) -> Dict[int, List[int]]:
-        """获取所有物品的 SID 映射。"""
+        """Get SID mappings for all items."""
         return self.item2sid.copy()
 
-    def save(self, path: str):
-        """保存分词器到文件。"""
-        import pickle
-        
-        data = {
+    def state_dict(self) -> dict:
+        """Return vocabulary and mapping state without retaining the dataset."""
+        return {
             'token2id': self.token2id,
             'id2token': self.id2token,
             'item2sid': self.item2sid,
@@ -419,22 +388,33 @@ class StreamingTokenizer:
             'n_digits': self.n_digits,
             'codebook_size': self.codebook_size,
             'sid_offset': self.sid_offset,
+            'max_item_seq_len': self.max_item_seq_len,
+            'max_token_seq_len': self.max_token_seq_len,
+            'pad_order': self.pad_order,
         }
-        
+
+    def save(self, path: str):
+        """Save the tokenizer to a file."""
+        import pickle
+
         with open(path, 'wb') as f:
-            pickle.dump(data, f)
-        
+            pickle.dump(self.state_dict(), f)
+
         self.logger.info(f"Tokenizer saved to {path}")
 
     @classmethod
     def load(cls, path: str, config: dict):
-        """从文件加载分词器。"""
+        """Load the tokenizer from a file."""
         import pickle
         
         with open(path, 'rb') as f:
             data = pickle.load(f)
         
-        # 创建一个空的 tokenizer 实例
+        return cls.from_state_dict(data, config)
+
+    @classmethod
+    def from_state_dict(cls, data: dict, config: dict):
+        """Restore vocabulary and mappings from a checkpoint."""
         tokenizer = cls.__new__(cls)
         tokenizer.config = config
         tokenizer.logger = getLogger()
@@ -449,9 +429,9 @@ class StreamingTokenizer:
         tokenizer.sid_offset = data['sid_offset']
         tokenizer.padding_token = cls.SPECIAL_TOKENS['[PAD]']
         
-        tokenizer.max_item_seq_len = config.get('max_item_seq_len', 50)
-        tokenizer.max_token_seq_len = config.get('max_token_seq_len', 512)
-        tokenizer.pad_order = config.get('pad_order', 'left')
+        tokenizer.max_item_seq_len = data.get('max_item_seq_len', config.get('max_item_seq_len', 50))
+        tokenizer.max_token_seq_len = data.get('max_token_seq_len', config.get('max_token_seq_len', 512))
+        tokenizer.pad_order = data.get('pad_order', config.get('pad_order', 'left'))
         
         tokenizer.collate_fn = {
             'train': tokenizer._collate_train,
@@ -464,18 +444,18 @@ class StreamingTokenizer:
 
     def decode_to_sid(self, token_ids) -> str:
         """
-        将 token IDs 解码为 SID 字符串（用于评估指标计算）。
+        Decode token IDs to a SID string for metric calculation.
         
         Args:
-            token_ids: token ID 序列
+            token_ids: token ID sequence
             
         Returns:
-            str: SID 字符串，如 '<a_171><b_450><c_123>...'
+            str: SID string such as '<a_171><b_450><c_123>...'
         """
         if hasattr(token_ids, 'tolist'):
             token_ids = token_ids.tolist()
         
-        # 过滤掉特殊 token 和 padding
+        # Filter special tokens and padding
         special_ids = set(self.SPECIAL_TOKENS.values())
         
         decoded_tokens = []
@@ -490,10 +470,10 @@ class StreamingTokenizer:
 
     def get_all_item_sid_strings(self) -> list:
         """
-        获取所有物品的 SID 字符串列表（用于计算 Coverage）。
+        Get all item SID strings for calculating Coverage.
         
         Returns:
-            List[str]: 所有物品的 SID 字符串
+            List[str]: SID strings for all items
         """
         sid_strings = []
         for item_id, token_ids in self.item2sid.items():
@@ -503,18 +483,18 @@ class StreamingTokenizer:
 
     def get_target_sid_string(self, item_id: int) -> str:
         """
-        获取目标物品的 SID 字符串。
+        Get the target item's SID string.
         
         Args:
-            item_id: 物品 ID
+            item_id: item ID
             
         Returns:
-            str: SID 字符串
+            str: SID string
         """
         if item_id in self.item2sid:
             return self.decode_to_sid(self.item2sid[item_id])
         return ""
 
-    # 为了兼容性，提供一个别名
+    # Provide an alias for compatibility
 VanillaStreamingTokenizer = StreamingTokenizer
 
