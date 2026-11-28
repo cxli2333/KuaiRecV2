@@ -2,6 +2,9 @@
 
 Official code for the KuaiRecV2 paper.
 
+[![Hugging Face Dataset](https://img.shields.io/badge/Hugging%20Face-KuaiRecV2-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/datasets/cxcx2333/KuaiRecV2)
+
+
 ## Structure
 
 - `MiniOneRec/`: generative recommendation with SFT, RL, and EWC-LoRA.
